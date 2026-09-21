@@ -30,6 +30,9 @@ var Agents = map[string]Agent{
 	// pi reads ~/.agents/skills and ./.agents/skills itself, and warns about
 	// a skill it finds twice, so it gets no directory of its own.
 	"pi": {canonical, canonical},
+	// crush and zed take MCP servers only; they have no skills directory.
+	"crush": {},
+	"zed":   {},
 }
 
 // Canonical is the directory below base whose links point into the clones.
@@ -49,6 +52,9 @@ func Dirs(agents []string, base string, project bool) ([]string, error) {
 		rel := agent.Global
 		if project {
 			rel = agent.Project
+		}
+		if rel == "" {
+			continue
 		}
 		if dir := filepath.Join(base, filepath.FromSlash(rel)); !seen[dir] {
 			seen[dir] = true

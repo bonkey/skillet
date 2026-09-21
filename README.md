@@ -1,7 +1,7 @@
 # skillet
 
-A local catalog of agent skills. Keep one list of the skills you have evaluated, group them into
-packs, and enable them globally, per project, or for a single agent session.
+A local catalog of agent skills and MCP servers. Keep one list of what you have evaluated, group it
+into packs, and enable it globally, per project, or for a single agent session.
 
 Every installed skill puts its description into every agent session, whether the task needs it or
 not. With [skills.sh](https://www.skills.sh) and `npx skills`, installed means loaded: the only way
@@ -50,6 +50,10 @@ skillet enable @craft                    # a whole pack, globally
 skillet disable top-design               # one skill of it
 skillet enable -p @craft                 # in this project; writes .skillet.yaml
 skillet run @craft -- claude             # only while the command runs
+
+skillet mcp import                       # take over the servers and presets of mcp-setup
+skillet secret set TAVILY_API_KEY        # the value behind ${TAVILY_API_KEY}
+skillet enable @ios mcp:tavily           # a pack's skills and servers, plus one server
 
 skillet list                             # packs and skills with descriptions and state
 skillet list 'swift|ios' --enabled       # search names and descriptions; terms may be regexps
@@ -108,20 +112,43 @@ sources:
     url: https://github.com/wondelai/skills.git
     ref: main            # optional: branch, tag, or full commit hash
     skills: [clean-code, top-design]
+mcps:
+  simctl:
+    type: local
+    command: [npx, -y, simctl-mcp]
+  tavily:
+    type: remote         # transport: sse for an SSE endpoint
+    url: https://mcp.tavily.com/mcp/?tavilyApiKey=${TAVILY_API_KEY}
 packs:
   craft:
     description: Code craft frameworks
     skills: [clean-code]
+    mcps: [simctl]
 enabled:
-  packs: [craft]         # every skill of these packs
+  packs: [craft]         # every skill and server of these packs
   skills: [top-design]   # plus these skills
-  except: []             # minus these
+  mcps: [tavily]         # plus these servers
+  except: [mcp:simctl]   # minus these
 ```
 
 A project keeps its own `packs`, `skills`, and `except` in `.skillet.yaml` at its root. Project
 skills add to the global ones.
 
-Agents: `claude-code`, `codex`, `cursor`, `gemini-cli`, `github-copilot`, `opencode`, `pi`.
+Agents: `claude-code`, `codex`, `cursor`, `gemini-cli`, `github-copilot`, `opencode`, `pi` for
+skills; `claude-code`, `codex`, `crush`, `cursor`, `gemini-cli`, `opencode`, `zed` for MCP servers.
+
+**MCP servers.** A server is written `mcp:name` in commands. Enabled servers go into the user
+config of every agent under `agents` (`~/.claude.json`, `~/.codex/config.toml`, …), in that
+agent's own format. skillet changes and removes only the entries it wrote; an existing entry of the
+same name is adopted when it is identical, and is a conflict otherwise. A server may also carry
+`environment`, `headers`, `timeout` (seconds) and `disabled_tools`; an agent gets the ones it
+supports. For crush, skillet writes the legacy `crush.json`, which crush reads next to `crushrc`.
+Servers are global: a project cannot enable them, `skillet run` can.
+
+**Secrets.** Write a secret as `${NAME}` anywhere in a server definition. The values live in
+`~/.config/skillet/secrets.yaml`, readable by you only, and never reach the catalog or its gist.
+They are filled in when an agent's config is written, so the agent configs hold the real values. A
+server with an unknown `${NAME}` is left as it is and reported.
 
 **Versions.** All skills of a source share its `ref`. `update` moves a branch forward. A tag or a
 commit keeps the source at the version you evaluated. `skillet sources` shows the commit each
@@ -144,8 +171,15 @@ warning. `skillet gist list` shows the tree.
   that stands where an enabled skill goes is reported as a conflict. `--force`, on any command,
   deletes such an entry and links the skill.
 - Descriptions come from each skill's `SKILL.md`, cached in `~/.local/share/skillet/index.json`.
-- `run` tracks sessions in `.claude/skills/.skillet-sessions/`. Parallel sessions keep each
-  other's links, and the next `sync` or `run` cleans up after a crashed one.
+- `run` tracks sessions in `.claude/skills/.skillet-sessions/` and, for servers, in
+  `~/.local/share/skillet/sessions/`. Parallel sessions keep each other's entries, and the next
+  `sync` or `run` cleans up after a crashed one.
+- `run` changes real files: the skills appear in the project, and the servers in the user config of
+  the agent the command starts (`claude`, `codex`, `gemini`, …), or of every configured agent for
+  any other command. Another session of that agent that starts meanwhile sees them too. An agent
+  that is already running picks changes up after a restart.
+- Agent configs are edited in place: comments, key order and everything outside the server entries
+  stay as they are.
 - The links are machine-local: add `.claude/skills/` and `.agents/skills/` to the project's ignore
   file. `.skillet.yaml` can be committed.
 - An agent directory that is a symlink to `.agents/skills` is left alone: the skills already show

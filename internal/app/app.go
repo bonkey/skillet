@@ -15,7 +15,9 @@ import (
 	"github.com/bonkey/skillet/internal/catalog"
 	"github.com/bonkey/skillet/internal/gist"
 	"github.com/bonkey/skillet/internal/link"
+	"github.com/bonkey/skillet/internal/mcp"
 	"github.com/bonkey/skillet/internal/paths"
+	"github.com/bonkey/skillet/internal/secrets"
 	"github.com/bonkey/skillet/internal/session"
 	"github.com/bonkey/skillet/internal/source"
 )
@@ -33,6 +35,13 @@ type App struct {
 	// Force lets every sync delete unmanaged entries that stand where an
 	// enabled skill goes.
 	Force bool
+
+	LastSync SyncReport
+
+	// adoptMCPs names servers whose existing entries in agent configs the
+	// next sync takes over. dryRunSecrets stands in for the secrets file.
+	adoptMCPs     []string
+	dryRunSecrets secrets.Store
 
 	Included []Included // the included gists, flattened in merge order
 	Warnings []string   // problems with included gists
@@ -121,6 +130,13 @@ type SyncReport struct {
 	Scope   Scope
 	Actions []link.Action
 	Missing []string // enabled skills that are not available in their source's clone
+
+	MCP []mcp.Action
+	// MissingSecrets maps servers that were left alone to the ${NAME}
+	// placeholders without a value.
+	MissingSecrets map[string][]string
+	// Notes are remarks for the user, such as servers a project cannot enable.
+	Notes []string
 }
 
 type SyncOptions struct {
@@ -131,16 +147,26 @@ type SyncOptions struct {
 }
 
 // Sync makes the scope's agent directories match its declared set plus, in
-// a project, the sets of running sessions.
+// a project, the sets of running sessions. In the global scope it also
+// writes the enabled MCP servers. The report of the latest global sync stays
+// in LastSync for operations that sync as their last step.
 func (a *App) Sync(scope Scope, opt SyncOptions) (SyncReport, error) {
+	report, err := a.sync(scope, opt)
+	if !scope.Project {
+		a.LastSync = report
+	}
+	return report, err
+}
+
+func (a *App) sync(scope Scope, opt SyncOptions) (SyncReport, error) {
 	report := SyncReport{Scope: scope}
 	names, err := a.Enabled(scope)
 	if err != nil {
 		return report, err
 	}
 	if scope.Project {
-		for _, set := range session.Live(scope.Root) {
-			names = append(names, a.Catalog.Resolve(set)...)
+		for _, live := range session.Live(session.ProjectDir(scope.Root)) {
+			names = append(names, a.Catalog.Resolve(live.Set)...)
 		}
 	}
 	desired := map[string]string{}
@@ -161,11 +187,145 @@ func (a *App) Sync(scope Scope, opt SyncOptions) (SyncReport, error) {
 	report.Actions, err = link.Sync(link.Canonical(scope.Root), dirs, desired, link.Options{
 		ReposDir: a.Paths.ReposDir(), Replace: opt.Replace, DryRun: opt.DryRun,
 	})
-	return report, err
+	if err != nil {
+		return report, err
+	}
+	if scope.Project {
+		set, _ := a.Set(scope)
+		if servers := a.Catalog.ResolveMCPs(set); len(servers) > 0 {
+			report.Notes = append(report.Notes, fmt.Sprintf(
+				"MCP servers are global: %s are not enabled by a project; enable them globally or use `skillet run`",
+				strings.Join(servers, ", ")))
+		}
+		return report, nil
+	}
+	return report, a.syncMCP(&report, opt.DryRun)
 }
 
-// Toggle enables or disables skills and packs ("@name") in a scope and syncs it.
+// syncMCP writes the globally enabled servers into the user configs of the
+// configured agents. A running session adds its servers for the agent it
+// started, or for every agent when it started none of them. A server whose
+// secrets are not all known is left as it is.
+func (a *App) syncMCP(report *SyncReport, dryRun bool) error {
+	store, err := a.secrets()
+	if err != nil {
+		return err
+	}
+	state, err := mcp.LoadState(a.Paths.MCPStateFile())
+	if err != nil {
+		return err
+	}
+	sessions := session.Live(a.Paths.SessionsDir())
+	agents := slices.Clone(a.Catalog.Agents)
+	for _, live := range sessions {
+		if live.Agent != "" && !slices.Contains(agents, live.Agent) {
+			agents = append(agents, live.Agent)
+		}
+	}
+	// An agent outside `agents` that still holds session entries gets cleaned up.
+	for _, agent := range mcp.Managed(a.Paths.Home, state) {
+		if !slices.Contains(agents, agent) {
+			agents = append(agents, agent)
+		}
+	}
+	if slices.Contains(agents, "crush") {
+		if _, err := os.Stat(filepath.Join(a.Paths.Home, ".config", "crush", "crushrc")); err == nil {
+			report.Notes = append(report.Notes,
+				"crush prefers ~/.config/crush/crushrc over crush.json, where skillet writes its servers")
+		}
+	}
+	if err := mcp.Adopt(a.Paths.Home, agents, a.adoptMCPs, state); err != nil {
+		return err
+	}
+	for _, agent := range agents {
+		var servers []string
+		if slices.Contains(a.Catalog.Agents, agent) {
+			servers = a.Catalog.ResolveMCPs(a.Catalog.Enabled)
+		}
+		for _, live := range sessions {
+			if live.Agent == "" || live.Agent == agent {
+				servers = append(servers, a.Catalog.ResolveMCPs(live.Set)...)
+			}
+		}
+		desired := map[string]catalog.MCP{}
+		var keep []string
+		for _, name := range servers {
+			def, missing := expandMCP(*a.Catalog.MCPs[name], store)
+			if len(missing) > 0 {
+				if report.MissingSecrets == nil {
+					report.MissingSecrets = map[string][]string{}
+				}
+				report.MissingSecrets[name] = missing
+				keep = append(keep, name)
+				continue
+			}
+			desired[name] = def
+		}
+		actions, err := mcp.Sync(a.Paths.Home, []string{agent}, desired, state, mcp.Options{
+			Keep: keep, Force: a.Force, DryRun: dryRun,
+		})
+		report.MCP = append(report.MCP, actions...)
+		if err != nil {
+			return err
+		}
+	}
+	if dryRun {
+		return nil
+	}
+	return state.Save(a.Paths.MCPStateFile())
+}
+
+func (a *App) secrets() (secrets.Store, error) {
+	if a.dryRunSecrets != nil {
+		return a.dryRunSecrets, nil
+	}
+	return secrets.Load(a.Paths.SecretsFile())
+}
+
+// expandMCP fills in the secrets of a definition and lists the placeholders
+// that have no value.
+func expandMCP(def catalog.MCP, store secrets.Store) (catalog.MCP, []string) {
+	var missing []string
+	expand := func(text string) string {
+		out, names := store.Expand(text)
+		for _, name := range names {
+			if !slices.Contains(missing, name) {
+				missing = append(missing, name)
+			}
+		}
+		return out
+	}
+	expandMap := func(in map[string]string) map[string]string {
+		if in == nil {
+			return nil
+		}
+		out := make(map[string]string, len(in))
+		for key, value := range in {
+			out[key] = expand(value)
+		}
+		return out
+	}
+	def.URL = expand(def.URL)
+	command := make([]string, len(def.Command))
+	for i, arg := range def.Command {
+		command[i] = expand(arg)
+	}
+	def.Command = command
+	def.Environment, def.Headers = expandMap(def.Environment), expandMap(def.Headers)
+	sort.Strings(missing)
+	return def, missing
+}
+
+// Toggle enables or disables skills, servers ("mcp:name") and packs
+// ("@name") in a scope and syncs it. Servers exist in the global scope only.
 func (a *App) Toggle(scope Scope, enable bool, names ...string) (SyncReport, error) {
+	if scope.Project {
+		for _, name := range names {
+			if strings.HasPrefix(name, catalog.MCPPrefix) {
+				return SyncReport{}, fmt.Errorf("%s: MCP servers are global; drop -p, or use `skillet run`", name)
+			}
+		}
+	}
 	set, err := a.Set(scope)
 	if err != nil {
 		return SyncReport{}, err
@@ -269,25 +429,42 @@ func (a *App) EditPack(name string, create bool, edit func(local *catalog.Catalo
 			return fmt.Errorf("pack %q comes from gist %s; create a pack of the same name to override it", name, from)
 		}
 	}
-	a.Local.Known = a.Catalog.HasSkill
+	a.Local.Known = func(member string) bool {
+		if server, ok := strings.CutPrefix(member, catalog.MCPPrefix); ok {
+			return a.Catalog.MCPs[server] != nil
+		}
+		return a.Catalog.HasSkill(member)
+	}
 	if err := edit(a.Local); err != nil {
 		return err
 	}
 	return a.saveAndSync()
 }
 
-// Remove deletes skills from the local catalog. "@pack" deletes the pack
-// together with its skills. Entries of included gists cannot be removed.
+// Remove deletes skills and servers ("mcp:name") from the local catalog.
+// "@pack" deletes the pack together with its skills and servers. Entries of included gists cannot be removed.
 // Clones of sources the catalog does not list are deleted.
 func (a *App) Remove(names ...string) (SyncReport, error) {
-	var skills []string
+	var skills, servers []string
 	for _, name := range names {
 		pack, isPack := strings.CutPrefix(name, "@")
+		server, isMCP := strings.CutPrefix(name, catalog.MCPPrefix)
 		switch {
+		case isMCP && a.Local.MCPs[server] != nil:
+			servers = append(servers, server)
+		case isMCP && a.Catalog.MCPs[server] != nil:
+			return SyncReport{}, fmt.Errorf("mcp server %q comes from gist %s and cannot be removed here; disable it instead", server, a.Catalog.MCPOrigin[server])
+		case isMCP:
+			return SyncReport{}, fmt.Errorf("unknown mcp server %q", server)
 		case isPack && a.Local.Packs[pack] != nil:
 			for _, skill := range a.Local.Packs[pack].Skills {
 				if a.Local.HasSkill(skill) {
 					skills = append(skills, skill)
+				}
+			}
+			for _, server := range a.Local.Packs[pack].MCPs {
+				if a.Local.MCPs[server] != nil {
+					servers = append(servers, server)
 				}
 			}
 		case !isPack && a.Local.HasSkill(name):
@@ -303,6 +480,9 @@ func (a *App) Remove(names ...string) (SyncReport, error) {
 	before := a.SourceNames()
 	for _, skill := range skills {
 		a.Local.RemoveSkill(skill)
+	}
+	for _, server := range servers {
+		a.Local.RemoveMCP(server)
 	}
 	for _, name := range names {
 		if pack, ok := strings.CutPrefix(name, "@"); ok {
@@ -441,7 +621,24 @@ func parallel(n int, fn func(i int)) {
 	wg.Wait()
 }
 
-// Run enables a set in the project for as long as a command runs.
+// agentOf names the agent that a command starts, or "" for other commands.
+func agentOf(command string) string {
+	switch filepath.Base(command) {
+	case "claude":
+		return "claude-code"
+	case "gemini":
+		return "gemini-cli"
+	case "cursor", "cursor-agent":
+		return "cursor"
+	case "codex", "crush", "opencode", "zed":
+		return filepath.Base(command)
+	}
+	return ""
+}
+
+// Run enables a set for as long as a command runs: its skills in the
+// project, its servers in the user config of the agent that the command
+// starts, or of every configured agent when it starts none of them.
 func (a *App) Run(names []string, argv []string) (int, error) {
 	var set catalog.Set
 	if err := a.Catalog.Enable(&set, names...); err != nil {
@@ -452,15 +649,27 @@ func (a *App) Run(names []string, argv []string) (int, error) {
 		return 1, err
 	}
 	pid := os.Getpid()
-	if err := session.Write(scope.Root, pid, set); err != nil {
-		return 1, err
+	live := session.Session{Set: set, Agent: agentOf(argv[0])}
+	dirs := []string{session.ProjectDir(scope.Root)}
+	scopes := []Scope{scope}
+	if len(a.Catalog.ResolveMCPs(set)) > 0 {
+		dirs, scopes = append(dirs, a.Paths.SessionsDir()), append(scopes, a.Global())
+	}
+	for _, dir := range dirs {
+		if err := session.Write(dir, pid, live); err != nil {
+			return 1, err
+		}
 	}
 	defer func() {
-		session.Remove(scope.Root, pid)
-		a.Sync(scope, SyncOptions{})
+		for i, dir := range dirs {
+			session.Remove(dir, pid)
+			a.Sync(scopes[i], SyncOptions{})
+		}
 	}()
-	if _, err := a.Sync(scope, SyncOptions{}); err != nil {
-		return 1, err
+	for _, s := range scopes {
+		if _, err := a.Sync(s, SyncOptions{}); err != nil {
+			return 1, err
+		}
 	}
 	return session.Run(argv)
 }

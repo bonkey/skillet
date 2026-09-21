@@ -44,6 +44,15 @@ func (p Paths) CatalogFile() string { return filepath.Join(p.Config, "catalog.ya
 func (p Paths) ReposDir() string    { return filepath.Join(p.Data, "repos") }
 func (p Paths) IndexFile() string   { return filepath.Join(p.Data, "index.json") }
 
+// SecretsFile holds the values of ${NAME} placeholders. It is never pushed.
+func (p Paths) SecretsFile() string { return filepath.Join(p.Config, "secrets.yaml") }
+
+// MCPStateFile records the MCP entries skillet wrote into agent configs.
+func (p Paths) MCPStateFile() string { return filepath.Join(p.Data, "mcp-state.json") }
+
+// SessionsDir holds the global part of running `skillet run` sessions.
+func (p Paths) SessionsDir() string { return filepath.Join(p.Data, "sessions") }
+
 // RepoDir is the clone of a source named "owner/repo".
 func (p Paths) RepoDir(source string) string {
 	return filepath.Join(p.ReposDir(), filepath.FromSlash(source))

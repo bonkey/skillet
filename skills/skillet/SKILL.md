@@ -1,12 +1,13 @@
 ---
 name: skillet
-description: "Finds, enables and disables agent skills and whole packs of skills with the skillet CLI, globally or for the current project. Use FIRST whenever a skill is wanted or missing: before searching the web or a skill directory, installing a skill from elsewhere, or writing a new one, search the local skillet catalog. Also use when the user asks to enable, disable, turn on, turn off, load or unload a skill or a pack, asks which skills are enabled or available, says too many skills are loaded, wants the skills for a kind of work (for example 'load the iOS skills for this project'), or mentions skillet."
+description: "Finds, enables and disables agent skills, MCP servers and whole packs of them with the skillet CLI, globally or for the current project. Use FIRST whenever a skill or an MCP server is wanted or missing: before searching the web or a directory, installing one from elsewhere, or writing a new skill, search the local skillet catalog. Also use when the user asks to enable, disable, turn on, turn off, load or unload a skill, an MCP server or a pack, asks which skills or servers are enabled or available, says too many skills or tools are loaded, wants the setup for a kind of work (for example 'load the iOS skills for this project'), or mentions skillet."
 ---
 
 # skillet
 
-`skillet` keeps a catalog of evaluated skills, grouped into packs. An enabled skill is a symlink in
-the agent's skills directory; a disabled skill stays in the catalog. In commands, `@name` is a pack
+`skillet` keeps a catalog of evaluated skills and MCP servers, grouped into packs. An enabled skill
+is a symlink in the agent's skills directory, an enabled server is an entry in the agent's user
+config; disabled ones stay in the catalog. In commands, `@name` is a pack, `mcp:name` is a server
 and a bare name is a skill.
 
 ## Search the catalog first
@@ -21,8 +22,9 @@ skillet list --json pull request         # every word
 ```
 
 Terms match names and descriptions of skills and of their packs, ignoring case, and may be regular
-expressions. Try several words for the same need. In the result, `skills` holds the matches keyed
-by name; `global` and `project` tell whether a match is enabled.
+expressions. Try several words for the same need. In the result, `skills` holds the matching
+skills keyed by name, and `global` and `project` tell whether a match is enabled. `mcps` holds the
+matching servers the same way, with their command or URL as `target`.
 
 1. A match that is disabled: enable it (see Workflow), and tell the user which skill you picked and why.
 2. A match that is enabled but not loaded in this session: it becomes available in the next
@@ -87,6 +89,20 @@ project: say so, and offer to disable it globally and enable it with `-p` in the
 
 5. Report what is enabled now and in which scope, and mention the next-session caveat.
 
+## MCP servers
+
+- Servers are global. `-p` does not take them; a pack enabled with `-p` links its skills and
+  prints a `note` naming the servers it skipped. Enable those globally, or suggest `skillet run`.
+- `skillet enable mcp:tavily` and `skillet disable mcp:tavily` write and remove the server in the
+  user config of every configured agent. Lines start with `mcp-add`, `mcp-update` or `mcp-remove`.
+- An agent loads its servers at start. Tell the user that the change takes effect in the next
+  session of that agent.
+- Never ask for, read, print or write a secret value. When a line says
+  `missing-secret mcp:<name> ... no value for <NAME>`, ask the user to run
+  `skillet secret set <NAME>` themselves; the following sync writes the server.
+- Do not edit `~/.config/skillet/secrets.yaml` or the agents' MCP config files by hand, and do not
+  add a server definition to the catalog without the user's consent.
+
 ## For one session only
 
 To give a single agent session extra skills without changing the project, the user starts it
@@ -96,14 +112,16 @@ through skillet:
 skillet run @ios -- claude
 ```
 
-The skills are linked while the command runs and unlinked when it exits. An agent cannot apply
-this to the session it is running in; suggest the command to the user.
+The skills are linked, and the pack's servers written into that agent's user config, while the
+command runs; both are undone when it exits. An agent cannot apply this to the session it is
+running in; suggest the command to the user.
 
 ## Troubleshooting
 
 | Output | Cause | What to do |
 | --- | --- | --- |
 | `conflict <path> exists and is not managed by skillet` | A file, folder or foreign link stands where the skill goes. | Show the path to the user. With their consent, rerun the same command with `--force`, which deletes that entry. |
+| `mcp-conflict <name> in <file> exists and is not managed by skillet` | The agent's config already has a different server of that name. | Show it to the user. With their consent, rerun with `--force`, which overwrites that entry. |
 | `missing <skill> is enabled but not found in its source` | The source is not cloned, or the skill left the repository. | Run `skillet update`, then `skillet sync`. If it stays missing, tell the user. |
 | `unknown skill "<name>"` or `unknown pack "<name>"` | The name is not in the catalog. | Check `skillet list --json`. If the skill is not there, `skillet add <owner/repo>` lists what a source offers; adding is the user's call. |
 | `the home directory cannot be a project` | `-p` was used in `~`. | Use the global scope, or change to the project directory. |

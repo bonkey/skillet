@@ -10,6 +10,9 @@ symlinks. `README.md` describes the behaviour; keep it short and focused on the 
 - `internal/source` — git clones, skill discovery, the description index
 - `internal/link` — the two-level symlink layout and its ownership rules
 - `internal/session` — `skillet run` sessions
+- `internal/mcp` — MCP server entries in the agents' user configs: per-agent shapes, a
+  comment-preserving JSON editor, a text-level TOML section editor, ownership state
+- `internal/secrets` — the local store behind `${NAME}` placeholders
 - `internal/gist` — gist access through `gh api`
 - `internal/importer` — the lock file of the `skills` npm CLI
 - `internal/app` — every operation; the CLI and the TUI both call it
@@ -27,6 +30,9 @@ Run `just check` before every commit. It runs `gofmt -l`, `go vet` and `go test`
 Tests run against temporary directories and local git repositories. They never touch the real home
 directory, the network or GitHub; gists are faked through the `gist.Client` interface. Keep it so.
 
+Secret values never go into the catalog, test output, logs or error messages; tests use made-up
+values. When inspecting a user's agent configs, print names and structure only.
+
 When changing behaviour that touches the home directory, also try it with a throwaway home:
 `HOME=$(mktemp -d) XDG_CONFIG_HOME= XDG_DATA_HOME= go run . <command>`.
 
@@ -34,7 +40,9 @@ When changing behaviour that touches the home directory, also try it with a thro
 
 - A change to a command, flag, catalog key or TUI key updates `README.md` and the command's help text.
 - A change to `list --json`, `enable`, `disable`, `sync`, `run`, the scope flags or the sync output
-  lines also updates `skills/skillet/SKILL.md`; agents act on what it says.
+  lines (skills and MCP) also updates `skills/skillet/SKILL.md`; agents act on what it says.
+- An agent's MCP entry shape in `internal/mcp/targets.go` follows that agent's documentation;
+  cite the source in the commit that changes it.
 - Docs and comments describe the current behaviour, without history.
 
 ## Releasing

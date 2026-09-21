@@ -22,10 +22,22 @@ type SkillView struct {
 	Commit      string   `json:"commit,omitempty"`
 }
 
+// MCPView describes one MCP server. Servers exist in the global scope only.
+type MCPView struct {
+	Name           string   `json:"name"`
+	Type           string   `json:"type"`
+	Target         string   `json:"target"` // the command line or the URL, placeholders unexpanded
+	Packs          []string `json:"packs"`
+	Global         bool     `json:"global"`
+	MissingSecrets []string `json:"missing_secrets,omitempty"`
+	From           string   `json:"from,omitempty"` // the included gist it comes from
+}
+
 type PackView struct {
 	Name        string   `json:"name"`
 	Description string   `json:"description"`
 	Skills      []string `json:"skills"`
+	MCPs        []string `json:"mcps,omitempty"`
 	From        string   `json:"from,omitempty"` // the included gist it comes from
 }
 
@@ -33,12 +45,13 @@ type View struct {
 	Project string               `json:"project,omitempty"` // project root, when inside one
 	Packs   []PackView           `json:"packs"`
 	Skills  map[string]SkillView `json:"skills"`
+	MCPs    map[string]MCPView   `json:"mcps,omitempty"`
 }
 
 // View describes the catalog with the enabled state of the global scope and
 // of the surrounding project, if there is one.
 func (a *App) View() (View, error) {
-	view := View{Skills: map[string]SkillView{}}
+	view := View{Skills: map[string]SkillView{}, MCPs: map[string]MCPView{}}
 	global, err := a.Enabled(a.Global())
 	if err != nil {
 		return view, err
@@ -67,13 +80,35 @@ func (a *App) View() (View, error) {
 			loose = append(loose, name)
 		}
 	}
+	store, err := a.secrets()
+	if err != nil {
+		return view, err
+	}
+	enabledMCPs := a.Catalog.ResolveMCPs(a.Catalog.Enabled)
+	var looseMCPs []string
+	for _, name := range a.Catalog.MCPNames() {
+		def := a.Catalog.MCPs[name]
+		_, missing := expandMCP(*def, store)
+		server := MCPView{
+			Name: name, Type: def.Type, Target: def.URL, Packs: a.Catalog.MCPPacksOf(name),
+			Global: slices.Contains(enabledMCPs, name), MissingSecrets: missing, From: a.Catalog.MCPOrigin[name],
+		}
+		if def.Type == "local" {
+			server.Target = strings.Join(def.Command, " ")
+		}
+		view.MCPs[name] = server
+		if len(server.Packs) == 0 {
+			looseMCPs = append(looseMCPs, name)
+		}
+	}
 	for _, name := range a.Catalog.PackNames() {
 		pack := a.Catalog.Packs[name]
 		view.Packs = append(view.Packs, PackView{Name: name, Description: pack.Description,
-			Skills: slices.Clone(pack.Skills), From: a.Catalog.PackOrigin[name]})
+			Skills: slices.Clone(pack.Skills), MCPs: slices.Clone(pack.MCPs), From: a.Catalog.PackOrigin[name]})
 	}
-	if len(loose) > 0 {
-		view.Packs = append(view.Packs, PackView{Name: NoPack, Description: "Skills that belong to no pack", Skills: loose})
+	if len(loose)+len(looseMCPs) > 0 {
+		view.Packs = append(view.Packs, PackView{Name: NoPack,
+			Description: "Skills and servers that belong to no pack", Skills: loose, MCPs: looseMCPs})
 	}
 	return view, nil
 }
@@ -100,11 +135,12 @@ func (a *App) Sources() []SourceView {
 	return out
 }
 
-// Filter narrows a view to one pack, to enabled skills, and to skills that
-// match every term. A term is a case-insensitive regular expression, or
-// plain text when it does not compile. It is matched against the skill's
-// name and description and the name and description of its pack. Packs left
-// without skills are dropped once any filter applies.
+// Filter narrows a view to one pack, to enabled entries, and to skills and
+// servers that match every term. A term is a case-insensitive regular
+// expression, or plain text when it does not compile. It is matched against
+// the entry's name and description (for a server: its command or URL) and
+// the name and description of its pack. Packs left empty are dropped once
+// any filter applies.
 func (v View) Filter(pack string, enabledOnly bool, terms []string) View {
 	var patterns []*regexp.Regexp
 	for _, term := range terms {
@@ -114,27 +150,39 @@ func (v View) Filter(pack string, enabledOnly bool, terms []string) View {
 		}
 		patterns = append(patterns, re)
 	}
+	matches := func(fields ...string) bool {
+		text := strings.Join(fields, " ")
+		return !slices.ContainsFunc(patterns, func(re *regexp.Regexp) bool { return !re.MatchString(text) })
+	}
 	filtering := enabledOnly || len(patterns) > 0
-	out := View{Project: v.Project, Skills: map[string]SkillView{}}
+	out := View{Project: v.Project, Skills: map[string]SkillView{}, MCPs: map[string]MCPView{}}
 	for _, p := range v.Packs {
 		if pack != "" && p.Name != pack {
 			continue
 		}
-		var skills []string
+		var skills, servers []string
 		for _, name := range p.Skills {
 			skill := v.Skills[name]
 			if enabledOnly && !skill.Global && !skill.Project {
 				continue
 			}
-			text := strings.Join([]string{skill.Name, skill.Description, p.Name, p.Description}, " ")
-			if slices.ContainsFunc(patterns, func(re *regexp.Regexp) bool { return !re.MatchString(text) }) {
+			if matches(skill.Name, skill.Description, p.Name, p.Description) {
+				skills = append(skills, name)
+				out.Skills[name] = skill
+			}
+		}
+		for _, name := range p.MCPs {
+			server := v.MCPs[name]
+			if enabledOnly && !server.Global {
 				continue
 			}
-			skills = append(skills, name)
-			out.Skills[name] = skill
+			if matches(server.Name, "mcp", server.Target, p.Name, p.Description) {
+				servers = append(servers, name)
+				out.MCPs[name] = server
+			}
 		}
-		if len(skills) > 0 || !filtering {
-			p.Skills = skills
+		if len(skills)+len(servers) > 0 || !filtering {
+			p.Skills, p.MCPs = skills, servers
 			out.Packs = append(out.Packs, p)
 		}
 	}

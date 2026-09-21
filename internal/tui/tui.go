@@ -29,8 +29,19 @@ const (
 	modePick
 )
 
-// row is a pack header when skill is empty.
-type row struct{ pack, skill string }
+// row is a skill, an MCP server, or a pack header when both are empty.
+type row struct{ pack, skill, mcp string }
+
+// member names what a row stands for the way commands spell it.
+func (r row) member() string {
+	switch {
+	case r.mcp != "":
+		return catalog.MCPPrefix + r.mcp
+	case r.skill != "":
+		return r.skill
+	}
+	return "@" + r.pack
+}
 
 type picker struct {
 	source, url string
@@ -119,7 +130,13 @@ func (m *Model) rebuild() {
 				skills = append(skills, name)
 			}
 		}
-		if needle != "" && len(skills) == 0 {
+		var servers []string
+		for _, name := range pack.MCPs {
+			if needle == "" || packHit || strings.Contains(strings.ToLower("mcp:"+name+" "+m.view.MCPs[name].Target), needle) {
+				servers = append(servers, name)
+			}
+		}
+		if needle != "" && len(skills)+len(servers) == 0 {
 			continue
 		}
 		m.rows = append(m.rows, row{pack: pack.Name})
@@ -128,6 +145,9 @@ func (m *Model) rebuild() {
 		}
 		for _, name := range skills {
 			m.rows = append(m.rows, row{pack: pack.Name, skill: name})
+		}
+		for _, name := range servers {
+			m.rows = append(m.rows, row{pack: pack.Name, mcp: name})
 		}
 	}
 	m.cursor = max(0, min(m.cursor, len(m.rows)-1))
@@ -157,14 +177,24 @@ func (m *Model) enabled(skill string) bool {
 	return m.view.Skills[skill].Global
 }
 
-func (m *Model) enabledCount(pack app.PackView) int {
-	n := 0
+// members counts what a pack holds in the active scope, and how much of it
+// is enabled. Servers count in the global scope only.
+func (m *Model) members(pack app.PackView) (enabled, total int) {
 	for _, skill := range pack.Skills {
+		total++
 		if m.enabled(skill) {
-			n++
+			enabled++
 		}
 	}
-	return n
+	if !m.scope.Project {
+		for _, server := range pack.MCPs {
+			total++
+			if m.view.MCPs[server].Global {
+				enabled++
+			}
+		}
+	}
+	return enabled, total
 }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -291,15 +321,26 @@ func (m *Model) toggle() {
 	}
 	var names []string
 	var enable bool
-	if r.skill != "" {
+	switch {
+	case r.mcp != "" && m.scope.Project:
+		m.status = "MCP servers are global: switch the scope with tab, or use `skillet run`"
+		return
+	case r.mcp != "":
+		names, enable = []string{r.member()}, !m.view.MCPs[r.mcp].Global
+	case r.skill != "":
 		names, enable = []string{r.skill}, !m.enabled(r.skill)
-	} else {
+	default:
 		pack := m.pack(r.pack)
-		enable = m.enabledCount(pack) < len(pack.Skills)
+		on, total := m.members(pack)
+		enable = on < total
+		names = []string{r.member()}
 		if r.pack == app.NoPack {
-			names = pack.Skills
-		} else {
-			names = []string{"@" + r.pack}
+			names = slices.Clone(pack.Skills)
+			if !m.scope.Project {
+				for _, server := range pack.MCPs {
+					names = append(names, catalog.MCPPrefix+server)
+				}
+			}
 		}
 	}
 	if len(names) == 0 {
@@ -375,13 +416,13 @@ func (m *Model) updateConfirm(msg tea.KeyMsg) tea.Cmd {
 
 func (m *Model) askRemove() {
 	r, ok := m.current()
-	if !ok || (r.skill == "" && r.pack == app.NoPack) {
+	if !ok || (r.skill == "" && r.mcp == "" && r.pack == app.NoPack) {
 		return
 	}
-	target, question := r.skill, fmt.Sprintf("remove skill %s from the catalog?", r.skill)
-	if r.skill == "" {
-		target = "@" + r.pack
-		question = fmt.Sprintf("remove pack %s and its %d skills from the catalog?", r.pack, len(m.pack(r.pack).Skills))
+	target, question := r.member(), fmt.Sprintf("remove %s from the catalog?", r.member())
+	if r.skill == "" && r.mcp == "" {
+		pack := m.pack(r.pack)
+		question = fmt.Sprintf("remove pack %s with its %d skills and %d servers from the catalog?", r.pack, len(pack.Skills), len(pack.MCPs))
 	}
 	m.confirm(question+" (y/n)", func(m *Model) tea.Cmd {
 		_, err := m.app.Remove(target)
@@ -396,11 +437,12 @@ func (m *Model) askRemove() {
 // pack when needed.
 func (m *Model) askPack() {
 	r, ok := m.current()
-	if !ok || r.skill == "" {
-		m.status = "select a skill first"
+	if !ok || (r.skill == "" && r.mcp == "") {
+		m.status = "select a skill or a server first"
 		return
 	}
-	m.ask(modeInput, "pack to add "+r.skill+" to, or to take it out of", "", func(m *Model, name string) tea.Cmd {
+	member := r.member()
+	m.ask(modeInput, "pack to add "+member+" to, or to take it out of", "", func(m *Model, name string) tea.Cmd {
 		name = strings.TrimPrefix(name, "@")
 		if name == "" {
 			return nil
@@ -409,18 +451,18 @@ func (m *Model) askPack() {
 		if !exists {
 			m.ask(modeInput, "description of new pack "+name, "", func(m *Model, description string) tea.Cmd {
 				m.editPack(name, true, func(local *catalog.Catalog) error {
-					return local.CreatePack(name, description, []string{r.skill})
+					return local.CreatePack(name, description, []string{member})
 				})
 				return nil
 			})
 			return nil
 		}
-		member := slices.Contains(pack.Skills, r.skill)
+		inPack := slices.Contains(pack.Skills, r.skill) || slices.Contains(pack.MCPs, r.mcp)
 		m.editPack(name, false, func(local *catalog.Catalog) error {
-			if member {
-				return local.PackRemove(name, []string{r.skill})
+			if inPack {
+				return local.PackRemove(name, []string{member})
 			}
-			return local.PackAdd(name, []string{r.skill})
+			return local.PackAdd(name, []string{member})
 		})
 		return nil
 	})
@@ -538,6 +580,11 @@ func syncSummary(report app.SyncReport) string {
 			conflicts++
 		}
 	}
+	for _, action := range report.MCP {
+		if action.Op == "mcp-conflict" {
+			conflicts++
+		}
+	}
 	var parts []string
 	if conflicts > 0 {
 		parts = append(parts, fmt.Sprintf("%d conflicts with unmanaged entries", conflicts))
@@ -545,6 +592,10 @@ func syncSummary(report app.SyncReport) string {
 	if len(report.Missing) > 0 {
 		parts = append(parts, "missing from source: "+strings.Join(report.Missing, ", "))
 	}
+	for server, names := range report.MissingSecrets {
+		parts = append(parts, fmt.Sprintf("mcp:%s needs `skillet secret set %s`", server, strings.Join(names, " ")))
+	}
+	parts = append(parts, report.Notes...)
 	return strings.Join(parts, "; ")
 }
 
@@ -604,7 +655,7 @@ func (m *Model) View() string {
 		line := truncate(m.rowText(m.rows[i]), leftWidth)
 		if i == m.cursor {
 			line = styleCursor.Render(fmt.Sprintf("%-*s", leftWidth, line))
-		} else if m.rows[i].skill == "" {
+		} else if m.rows[i].skill == "" && m.rows[i].mcp == "" {
 			line = stylePack.Render(line)
 		}
 		lines = append(lines, line)
@@ -632,14 +683,15 @@ func (m *Model) View() string {
 }
 
 func (m *Model) rowText(r row) string {
-	if r.skill == "" {
+	if r.skill == "" && r.mcp == "" {
 		pack := m.pack(r.pack)
-		on, fold := m.enabledCount(pack), "▾"
+		on, total := m.members(pack)
+		fold := "▾"
 		if m.collapsed[r.pack] && m.filter == "" {
 			fold = "▸"
 		}
 		box := "[ ]"
-		if on == len(pack.Skills) && on > 0 {
+		if on == total && on > 0 {
 			box = "[x]"
 		} else if on > 0 {
 			box = "[-]"
@@ -650,7 +702,19 @@ func (m *Model) rowText(r row) string {
 		} else if strings.TrimSpace(pack.Description) == "" {
 			name += " !"
 		}
-		return fmt.Sprintf("%s %s %s  %d/%d enabled", fold, box, name, on, len(pack.Skills))
+		return fmt.Sprintf("%s %s %s  %d/%d enabled", fold, box, name, on, total)
+	}
+	if r.mcp != "" {
+		server := m.view.MCPs[r.mcp]
+		box := "[ ]"
+		if server.Global {
+			box = "[x]"
+		}
+		note := server.Target
+		if len(server.MissingSecrets) > 0 {
+			note = "? needs secret " + strings.Join(server.MissingSecrets, ", ")
+		}
+		return fmt.Sprintf("    %s mcp:%s — %s", box, r.mcp, note)
 	}
 	skill := m.view.Skills[r.skill]
 	box := "[ ]"
@@ -674,6 +738,23 @@ func (m *Model) detail() string {
 	if !ok {
 		return ""
 	}
+	if r.mcp != "" {
+		server := m.view.MCPs[r.mcp]
+		lines := []string{styleTitle.Render("mcp:" + server.Name), "", server.Type + " MCP server", server.Target, ""}
+		if len(server.MissingSecrets) > 0 {
+			lines = append(lines, styleWarn.Render("no value for "+strings.Join(server.MissingSecrets, ", ")+
+				" — run `skillet secret set <NAME>`"), "")
+		}
+		packs := "none"
+		if len(server.Packs) > 0 {
+			packs = "@" + strings.Join(server.Packs, ", @")
+		}
+		info := "packs:  " + packs + "\nglobal: " + onOff(server.Global) + "\nServers are global; `skillet run` adds them for one command."
+		if server.From != "" {
+			info = "from:   gist " + server.From + "\n" + info
+		}
+		return strings.Join(lines, "\n") + styleDim.Render(info)
+	}
 	if r.skill == "" {
 		pack := m.pack(r.pack)
 		title := "@" + r.pack
@@ -687,7 +768,11 @@ func (m *Model) detail() string {
 		if pack.From != "" {
 			description += "\n\n" + styleDim.Render("from gist "+pack.From)
 		}
-		return styleTitle.Render(title) + "\n\n" + description + "\n\n" + styleDim.Render(strings.Join(pack.Skills, ", "))
+		members := slices.Clone(pack.Skills)
+		for _, server := range pack.MCPs {
+			members = append(members, catalog.MCPPrefix+server)
+		}
+		return styleTitle.Render(title) + "\n\n" + description + "\n\n" + styleDim.Render(strings.Join(members, ", "))
 	}
 	skill := m.view.Skills[r.skill]
 	description := skill.Description

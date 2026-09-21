@@ -26,7 +26,8 @@ func model(t *testing.T) *Model {
 	os.MkdirAll(p.Cwd, 0o755)
 	c := catalog.New()
 	c.Sources["acme/skills"] = &catalog.Source{URL: "x", Skills: []string{"alpha", "beta", "loose"}}
-	c.Packs["acme"] = &catalog.Pack{Description: "Acme skills", Skills: []string{"alpha", "beta"}}
+	c.MCPs["simctl"] = &catalog.MCP{Type: "local", Command: []string{"npx", "-y", "simctl-mcp"}}
+	c.Packs["acme"] = &catalog.Pack{Description: "Acme skills", Skills: []string{"alpha", "beta"}, MCPs: []string{"simctl"}}
 	if err := c.Save(p.CatalogFile()); err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +65,8 @@ func press(m *Model, keys ...string) {
 
 func TestRowsGroupSkillsUnderPacks(t *testing.T) {
 	m := model(t)
-	want := []row{{"acme", ""}, {"acme", "alpha"}, {"acme", "beta"}, {app.NoPack, ""}, {app.NoPack, "loose"}}
+	want := []row{{pack: "acme"}, {pack: "acme", skill: "alpha"}, {pack: "acme", skill: "beta"},
+		{pack: "acme", mcp: "simctl"}, {pack: app.NoPack}, {pack: app.NoPack, skill: "loose"}}
 	if !reflect.DeepEqual(m.rows, want) {
 		t.Fatalf("rows: %v", m.rows)
 	}
@@ -76,7 +78,7 @@ func TestToggleSkillAndPack(t *testing.T) {
 	if got := m.app.Catalog.Enabled; !reflect.DeepEqual(got.Skills, []string{"alpha"}) {
 		t.Fatalf("after toggling alpha: %+v", got)
 	}
-	if !strings.Contains(m.View(), "[-] @acme  1/2 enabled") {
+	if !strings.Contains(m.View(), "[-] @acme  1/3 enabled") {
 		t.Errorf("pack header should show a partial state:\n%s", m.View())
 	}
 
@@ -115,11 +117,11 @@ func TestScopeSwitchWritesProjectManifest(t *testing.T) {
 func TestFilterAndFold(t *testing.T) {
 	m := model(t)
 	press(m, "/", "b", "e", "t", "enter")
-	if want := []row{{"acme", ""}, {"acme", "beta"}}; !reflect.DeepEqual(m.rows, want) {
+	if want := []row{{pack: "acme"}, {pack: "acme", skill: "beta"}}; !reflect.DeepEqual(m.rows, want) {
 		t.Fatalf("filtered rows: %v", m.rows)
 	}
 	press(m, "esc")
-	if len(m.rows) != 5 {
+	if len(m.rows) != 6 {
 		t.Fatalf("esc should clear the filter: %v", m.rows)
 	}
 	press(m, "down", "left")
@@ -151,4 +153,31 @@ func TestViewFitsTheTerminal(t *testing.T) {
 	if !strings.Contains(lines[0], "skillet") {
 		t.Errorf("header missing: %q", lines[0])
 	}
+}
+
+func TestToggleServer(t *testing.T) {
+	m := model(t)
+	m.cursor = 3 // mcp:simctl
+	press(m, " ")
+	if got := m.app.Local.Enabled.MCPs; !reflect.DeepEqual(got, []string{"simctl"}) {
+		t.Fatalf("after toggling the server: %+v", m.app.Local.Enabled)
+	}
+	if text := string(must(os.ReadFile(filepath.Join(m.app.Paths.Home, ".claude.json")))); !strings.Contains(text, "simctl-mcp") {
+		t.Errorf("the server is written into the agent config:\n%s", text)
+	}
+	if !strings.Contains(m.View(), "[x] mcp:simctl") {
+		t.Errorf("view:\n%s", m.View())
+	}
+
+	press(m, "tab", " ")
+	if !strings.Contains(m.status, "global") || len(m.app.Local.Enabled.MCPs) != 1 {
+		t.Errorf("a server cannot be toggled in the project scope: %q", m.status)
+	}
+}
+
+func must(data []byte, err error) []byte {
+	if err != nil {
+		panic(err)
+	}
+	return data
 }

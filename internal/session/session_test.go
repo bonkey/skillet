@@ -10,20 +10,20 @@ import (
 )
 
 func TestLiveKeepsRunningSessionsAndReapsDeadOnes(t *testing.T) {
-	root := t.TempDir()
+	root := ProjectDir(t.TempDir())
 	dead := exec.Command("true")
 	if err := dead.Run(); err != nil {
 		t.Fatal(err)
 	}
-	mine := catalog.Set{Packs: []string{"ios"}}
+	mine := Session{Set: catalog.Set{Packs: []string{"ios"}}, Agent: "claude-code"}
 	if err := Write(root, os.Getpid(), mine); err != nil {
 		t.Fatal(err)
 	}
-	if err := Write(root, dead.Process.Pid, catalog.Set{Skills: []string{"stale"}}); err != nil {
+	if err := Write(root, dead.Process.Pid, Session{Set: catalog.Set{Skills: []string{"stale"}}}); err != nil {
 		t.Fatal(err)
 	}
 
-	if got := Live(root); !reflect.DeepEqual(got, []catalog.Set{mine}) {
+	if got := Live(root); !reflect.DeepEqual(got, []Session{mine}) {
 		t.Fatalf("got %+v", got)
 	}
 	if _, err := os.Stat(file(root, dead.Process.Pid)); !os.IsNotExist(err) {
@@ -33,7 +33,7 @@ func TestLiveKeepsRunningSessionsAndReapsDeadOnes(t *testing.T) {
 	if err := Remove(root, os.Getpid()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(Dir(root)); !os.IsNotExist(err) {
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
 		t.Error("empty session directory should be removed")
 	}
 }
