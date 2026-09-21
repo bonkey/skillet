@@ -139,21 +139,6 @@ func TestAddSkillsRejectsNameFromAnotherSource(t *testing.T) {
 	}
 }
 
-func TestRemoveSkillCleansEverything(t *testing.T) {
-	c := sample()
-	c.Enabled = Set{Skills: []string{"pr"}, Except: []string{"pr"}}
-	c.RemoveSkill("pr")
-	if _, ok := c.Sources["me/own"]; ok {
-		t.Error("a source without skills should be dropped")
-	}
-	if !reflect.DeepEqual(c.Packs["mixed"].Skills, []string{"b"}) {
-		t.Errorf("pack not cleaned: %v", c.Packs["mixed"].Skills)
-	}
-	if len(c.Enabled.Skills) != 0 || len(c.Enabled.Except) != 0 {
-		t.Errorf("enabled set not cleaned: %+v", c.Enabled)
-	}
-}
-
 func TestPackEditing(t *testing.T) {
 	c := sample()
 	if err := c.CreatePack("new", "", []string{"a"}); err == nil {
@@ -173,27 +158,6 @@ func TestPackEditing(t *testing.T) {
 	}
 	if got := c.Packs["new"].Skills; !reflect.DeepEqual(got, []string{"a@acme/skills", "c@acme/skills"}) {
 		t.Errorf("got %v", got)
-	}
-	c.Enabled.Packs = []string{"new"}
-	c.RemovePack("new")
-	if _, ok := c.Packs["new"]; ok || len(c.Enabled.Packs) != 0 {
-		t.Error("pack not removed everywhere")
-	}
-}
-
-func TestSetFile(t *testing.T) {
-	file := filepath.Join(t.TempDir(), ".skillet.toml")
-	s, err := LoadSet(file)
-	if err != nil || !s.Empty() {
-		t.Fatalf("missing manifest: %+v %v", s, err)
-	}
-	want := Set{Packs: []string{"ios"}, Skills: []string{"pr"}}
-	if err := want.Save(file); err != nil {
-		t.Fatal(err)
-	}
-	got, err := LoadSet(file)
-	if err != nil || !reflect.DeepEqual(got, want) {
-		t.Fatalf("got %+v %v", got, err)
 	}
 }
 
@@ -324,25 +288,12 @@ func TestPackOfWholeSources(t *testing.T) {
 	if !reflect.DeepEqual(s.Except, []string{"b@acme/skills"}) || !slices.Contains(c.PacksOf("d"), "all-acme") {
 		t.Errorf("exceptions and membership work through sources: %+v", s)
 	}
-
-	if err := c.PackRemove("all-acme", []string{"a"}); err == nil {
-		t.Error("a skill that a source brings cannot be taken out on its own")
-	}
-	if err := c.PackRemove("all-acme", []string{"acme/skills"}); err != nil || len(c.PackSkills("all-acme")) != 1 {
-		t.Errorf("taking the source out: %v %v", err, c.PackSkills("all-acme"))
-	}
-
-	c.PackAdd("all-acme", []string{"me/own"})
-	c.RemoveSkill("pr")
-	if len(c.Packs["all-acme"].Sources) != 0 {
-		t.Errorf("a source that is gone leaves the pack: %+v", c.Packs["all-acme"])
-	}
 }
 
 func TestSourceWithoutSkillsTakesAllItOffers(t *testing.T) {
 	c := sample()
-	c.AddSource("whole/repo", "https://x/whole/repo.git", "")
-	c.AddSource("other/whole", "https://x/other/whole.git", "")
+	c.Sources["whole/repo"] = &Source{URL: "https://x/whole/repo.git"}
+	c.Sources["other/whole"] = &Source{URL: "https://x/other/whole.git"}
 	merged, err := Merge(c, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -374,13 +325,5 @@ func TestSourceWithoutSkillsTakesAllItOffers(t *testing.T) {
 	// Naming a skill of a source that takes all keeps it taking all.
 	if err := c.AddSkills("whole/repo", "", "", []string{"x"}); err != nil || len(c.Sources["whole/repo"].Skills) != 0 {
 		t.Errorf("AddSkills: %v %+v", err, c.Sources["whole/repo"])
-	}
-
-	c.CreatePack("whole", "Whole repos", []string{"whole/repo", "pr"})
-	c.Enabled.Skills = []string{"pr"}
-	c.RemoveSource("whole/repo")
-	c.RemoveSource("me/own")
-	if _, ok := c.Sources["whole/repo"]; ok || len(c.Packs["whole"].Sources)+len(c.Packs["whole"].Skills) != 0 || len(c.Enabled.Skills) != 0 {
-		t.Errorf("RemoveSource cleans packs and the enabled set: %+v %+v", c.Packs["whole"], c.Enabled)
 	}
 }

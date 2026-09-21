@@ -11,6 +11,7 @@ import (
 
 	"github.com/bonkey/skillet/internal/catalog"
 	"github.com/bonkey/skillet/internal/gist"
+	"github.com/bonkey/skillet/internal/paths"
 )
 
 // Included is one gist that takes part in the merged catalog.
@@ -71,9 +72,18 @@ func (a *App) merge() error {
 	for i, inc := range a.Included {
 		ids[i], catalogs[i] = inc.ID, inc.Catalog
 	}
+	if a.Project != nil {
+		// The manifest enables for its project only.
+		project := *a.Project
+		project.Enabled = catalog.Set{}
+		ids, catalogs = append(ids, paths.ManifestName), append(catalogs, &project)
+	}
 	merged, err := catalog.Merge(a.Local, ids, catalogs)
 	a.Catalog = merged
 	if err == nil {
+		if a.Agents != nil {
+			merged.Agents = a.Agents
+		}
 		a.expand()
 	}
 	return err

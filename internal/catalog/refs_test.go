@@ -51,31 +51,4 @@ func TestSkillReferencesNameTheirSource(t *testing.T) {
 	if got := c.PackSkills("acme"); !reflect.DeepEqual(got, []string{"a", "b", "c"}) {
 		t.Errorf("pack skills are plain names: %v", got)
 	}
-	if err := c.PackRemove("acme", []string{"c"}); err != nil || len(c.Packs["acme"].Skills) != 2 {
-		t.Errorf("remove by bare name: %v %v", c.Packs["acme"].Skills, err)
-	}
-	c.PackAdd("acme", []string{"c"})
-	c.RemoveSkill("c")
-	if got := c.Packs["acme"].Skills; !reflect.DeepEqual(got, []string{"a", "b"}) {
-		t.Errorf("RemoveSkill drops references: %v", got)
-	}
-}
-
-func TestLookupRecordsTheSourceOfForeignSkills(t *testing.T) {
-	c := sample()
-	c.Lookup = func(member string) (string, bool) {
-		if member == "foreign" {
-			return "foreign@their/repo", true
-		}
-		return "", false
-	}
-	if err := c.PackAdd("acme", []string{"foreign", "ghost"}); err == nil {
-		t.Fatal("an unknown skill should be rejected")
-	}
-	if err := c.PackAdd("acme", []string{"foreign"}); err != nil {
-		t.Fatal(err)
-	}
-	if got := c.Packs["acme"].Skills; !reflect.DeepEqual(got, []string{"a", "b", "foreign@their/repo"}) {
-		t.Errorf("got %v", got)
-	}
 }

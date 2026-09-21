@@ -300,3 +300,20 @@ func Managed(home string, state State) []string {
 	sort.Strings(agents)
 	return agents
 }
+
+// Enabled lists the servers skillet manages in the config of any of agents.
+// The managed entries are the enabled state of servers.
+func Enabled(home string, agents []string, state State) []string {
+	var names []string
+	for _, agent := range agents {
+		if target, ok := Targets[agent]; ok {
+			for name := range state[filepath.Join(home, filepath.FromSlash(target.File))] {
+				if !slices.Contains(names, name) {
+					names = append(names, name)
+				}
+			}
+		}
+	}
+	sort.Strings(names)
+	return names
+}

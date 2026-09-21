@@ -113,14 +113,3 @@ func (c *Catalog) disableMCP(s *Set, server string) {
 		s.Except = add(s.Except, MCPPrefix+server)
 	}
 }
-
-// RemoveMCP drops a server definition, its pack memberships and its place in
-// the global set.
-func (c *Catalog) RemoveMCP(server string) {
-	delete(c.MCPs, server)
-	for _, pack := range c.Packs {
-		pack.MCPs = remove(pack.MCPs, server)
-	}
-	c.Enabled.MCPs = remove(c.Enabled.MCPs, server)
-	c.Enabled.Except = remove(c.Enabled.Except, MCPPrefix+server)
-}

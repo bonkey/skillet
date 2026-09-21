@@ -6,9 +6,11 @@ symlinks. `README.md` describes the behaviour; keep it short and focused on the 
 ## Layout
 
 - `main.go` — cobra commands; output formatting only
-- `internal/catalog` — the catalog file, packs, enabled sets, merging of included catalogs
+- `internal/catalog` — the catalog file, packs, enabled sets, merging of included catalogs and of a
+  project's `.skillet.toml`
 - `internal/source` — git clones, skill discovery, the description index
-- `internal/link` — the two-level symlink layout and its ownership rules
+- `internal/link` — the symlinks into the clones and their ownership rules; the links are the
+  enabled state
 - `internal/session` — `skillet run` sessions
 - `internal/mcp` — MCP server entries in the agents' user configs: per-agent shapes, a
   comment-preserving JSON editor, a text-level TOML section editor, ownership state
@@ -21,8 +23,10 @@ symlinks. `README.md` describes the behaviour; keep it short and focused on the 
 - `skills/skillet/SKILL.md` — the skill that teaches agents to enable and disable skills with the CLI
 - `examples/config.toml` — a starting catalog with that skill enabled; a test loads it
 
-`App.Local` is the catalog that is edited and saved. `App.Catalog` is `Local` merged with the
-included gists, and is what everything reads. Change `Local`, then call `Save`.
+`App.Local` is the user's catalog file. `App.Catalog` is `Local` merged with the included gists and
+the project's manifest, and is what everything reads. Only `import` and the `gist` commands write
+`Local`; `enable`, `disable`, `sync` and `run` change links and the agents' MCP entries, never a
+config file.
 
 ## Checks
 

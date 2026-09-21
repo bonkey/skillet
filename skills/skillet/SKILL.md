@@ -7,9 +7,10 @@ description: "Finds, enables and disables agent skills, MCP servers and whole pa
 
 `skillet` keeps a catalog of evaluated skills and MCP servers, grouped into packs. An enabled skill
 is a symlink in the agent's skills directory, an enabled server is an entry in the agent's user
-config; disabled ones stay in the catalog. In commands, `@name` is a pack, `mcp:name` is a server
-and a bare name is a skill. The config records a skill as `name@owner/repo`; commands accept that
-spelling too, and reject it when the skill comes from another source.
+config; disabled ones stay in the catalog. Those links and entries are the state: `enable` and
+`disable` change them and never write a config file. In commands, `@name` is a pack, `mcp:name` is
+a server and a bare name is a skill. Commands accept `name@owner/repo` too, and reject it when the
+skill comes from another source.
 
 ## Search the catalog first
 
@@ -39,17 +40,23 @@ matching servers the same way, with their command or URL as `target`.
 
 - Run `skillet` only with a subcommand. Bare `skillet` opens an interactive TUI that an agent cannot drive.
 - Read the catalog with `skillet list --json`. Take skill and pack names from that output; never guess them.
-- To switch a skill off, use `disable`. `remove` deletes it from the catalog: run it only when the user asks for exactly that.
+- To switch a skill off, use `disable`. The catalog is the user's `config.toml`: do not edit it without the user's consent.
 - Never add `--force` on your own. It deletes whatever stands in the way of a link. When a command prints a `conflict` line, show it to the user and ask.
-- Adding skills to the catalog (`skillet add`) is the user's decision: the catalog holds skills the user has evaluated. Propose the command and wait for a yes.
+- Adding skills to the catalog is the user's decision: it holds skills the user has evaluated. Propose the lines for `~/.config/skillet/config.toml` and wait for a yes.
+- Do not pass `--agents` unless the user asks to act on certain agents only.
 - Agents read their skills directories when a session starts. After a change, tell the user that a skill that does not show up yet is available in the next session.
 
 ## Choosing the scope
 
 | The user means | Flag | Effect |
 | --- | --- | --- |
-| this project, this repo, this task | `-p` | Links in `./.claude/skills` and `./.agents/skills`; the set is saved in `.skillet.toml` at the project root. Without a `.skillet.toml` up the tree, `-p` creates one in the working directory. |
-| everywhere, always, by default | none | Links in `~/.claude/skills` and `~/.agents/skills`; the set is saved in `~/.config/skillet/config.toml`. |
+| this project, this repo, this task | `-p` | Links in the project's agent directories, such as `./.claude/skills` and `./.agents/skills`. The project is the nearest directory up the tree with a `.skillet.toml`, or else with a git repository, or else the working directory. |
+| everywhere, always, by default | none | Links in the agent directories below the home directory, such as `~/.claude/skills`. |
+
+`[enabled]` in `~/.config/skillet/config.toml`, and in a project's `.skillet.toml`, lists what is
+always on. `skillet sync` enables it again, so disabling such an entry lasts until the next sync,
+and the command prints a `note` that says so. To switch it off for good, the user takes it out of
+that file.
 
 When the request names no scope, prefer `-p` for skills a task needs and the global scope for
 skills the user wants in general. Ask when the choice matters and is unclear.
@@ -83,10 +90,12 @@ project: say so, and offer to disable it globally and enable it with `-p` in the
    skillet disable @marketing            # a whole pack, globally
    ```
 
-   Disabling one skill of an enabled pack keeps the pack enabled and records the skill as an exception.
+   Disabling one skill of a pack leaves the pack's other skills enabled.
 
-4. Read the output. Each line is one change: `link`, `unlink`, `relink`, `replace`. No output
-   means the state already matched. Handle `conflict` and `missing` lines as described below.
+4. Read the output. Each line is one kind of change with the scope and the names it covers:
+   `link`, `unlink`, `relink`, `replace`. With `--verbose` each line is one link with its path.
+   `nothing to change` means the state already matched. Handle `conflict`, `missing` and `extra`
+   lines as described below.
 
 5. Report what is enabled now and in which scope, and mention the next-session caveat.
 
@@ -95,7 +104,8 @@ project: say so, and offer to disable it globally and enable it with `-p` in the
 - Servers are global. `-p` does not take them; a pack enabled with `-p` links its skills and
   prints a `note` naming the servers it skipped. Enable those globally, or suggest `skillet run`.
 - `skillet enable mcp:tavily` and `skillet disable mcp:tavily` write and remove the server in the
-  user config of every configured agent. Lines start with `mcp-add`, `mcp-update` or `mcp-remove`.
+  user config of every configured agent. Lines start with `mcp-add`, `mcp-update` or `mcp-remove`
+  and name the servers; with `--verbose` there is one line per config file.
   An entry of the same name that is already in an agent's config is overwritten with the
   catalog's definition.
 - An agent loads its servers at start. Tell the user that the change takes effect in the next
@@ -103,8 +113,8 @@ project: say so, and offer to disable it globally and enable it with `-p` in the
 - Never ask for, read, print or write a secret value. Secrets come from the user's 1Password
   items or a local file. When a line says `missing-secret mcp:<name> ... no value for <NAME>`, or
   a `note` mentions 1Password, tell the user: they add a field `<NAME>` to their 1Password item,
-  unlock 1Password, or add a `<NAME> = "value"` line to `~/.config/skillet/secrets.toml` themselves;
-  the following sync writes the server.
+  unlock 1Password, or add a `<NAME> = "value"` line to `~/.config/skillet/secrets.toml` themselves.
+  The server is not enabled until then: run the `enable` command again afterwards.
 - Do not edit `~/.config/skillet/secrets.toml` or the agents' MCP config files by hand, and do not
   add a server definition to the catalog without the user's consent.
 
@@ -127,7 +137,8 @@ running in; suggest the command to the user.
 | --- | --- | --- |
 | `conflict <path> exists and is not managed by skillet` | A file, folder or foreign link stands where the skill goes. | Show the path to the user. With their consent, rerun the same command with `--force`, which deletes that entry. |
 | `missing <skill> is enabled but not found in its source` | The source is not cloned, or the skill left the repository. | Run `skillet update`, then `skillet sync`. If it stays missing, tell the user. |
-| `unknown skill "<name>"` or `unknown pack "<name>"` | The name is not in the catalog. | Check `skillet list --json`. If the skill is not there, `skillet add <owner/repo>` lists what a source offers; adding is the user's call. |
+| `extra <names>: enabled in <scope> without being declared …` | `sync` found skills or servers that are enabled but not listed under `[enabled]` in the scope's config file. They stay enabled. | Nothing, unless the user wants only the declared set: then `skillet sync --remove`, with their consent. |
+| `unknown skill "<name>"` or `unknown pack "<name>"` | The name is not in the catalog. | Check `skillet list --json`. If the skill is not there, adding its source to `config.toml` is the user's call. |
 | `the home directory cannot be a project` | `-p` was used in `~`. | Use the global scope, or change to the project directory. |
 | `warning: gist …` | An included gist could not be reached; its cached copy is in use. | Carry on. Mention it if the user expected fresh data. |
 | `skillet: command not found` | skillet is not installed. | Ask the user to install it: `mise use -g github:bonkey/skillet` or `go install github.com/bonkey/skillet@latest`. |

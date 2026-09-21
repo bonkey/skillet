@@ -35,7 +35,8 @@ type Pack struct {
 	MCPs    []string `toml:"mcps,omitempty"`
 }
 
-// Set is the enabled state of one scope.
+// Set names what to enable: what a config file declares for its scope, what
+// the links of a scope hold, or what a `run` session adds.
 type Set struct {
 	Packs  []string `toml:"packs,omitempty"`
 	Skills []string `toml:"skills,omitempty"`
@@ -45,7 +46,7 @@ type Set struct {
 	Except []string `toml:"except,omitempty"`
 
 	// Inherited and InheritedMCPs list what included catalogs enable. They
-	// are never saved.
+	// are never written to a file.
 	Inherited     []string `toml:"-"`
 	InheritedMCPs []string `toml:"-"`
 }
@@ -65,11 +66,6 @@ type Catalog struct {
 	Packs   map[string]*Pack   `toml:"packs"`
 	Enabled Set                `toml:"enabled"`
 
-	// Lookup widens what a pack may hold beyond this catalog's own skills
-	// and servers, for packs that group entries of included catalogs or of
-	// sources that take all skills. It receives a skill reference, or a
-	// server as "mcp:name", and returns the spelling to record.
-	Lookup func(member string) (string, bool) `toml:"-"`
 	// SkillOrigin, MCPOrigin and PackOrigin name the gist an entry of a
 	// merged catalog was included from. Entries of the local catalog are absent.
 	SkillOrigin map[string]string `toml:"-"`
@@ -116,25 +112,6 @@ func Load(file string) (*Catalog, error) {
 }
 
 func (c *Catalog) Save(file string) error { return writeTOML(file, c) }
-
-func LoadSet(file string) (Set, error) {
-	var s Set
-	data, err := os.ReadFile(file)
-	if errors.Is(err, fs.ErrNotExist) {
-		return s, nil
-	}
-	if err != nil {
-		return s, err
-	}
-	if err := toml.Unmarshal(data, &s); err != nil {
-		return s, fmt.Errorf("%s: %w", file, err)
-	}
-	return s, nil
-}
-
-func (s Set) Save(file string) error { return writeTOML(file, s) }
-
-func (s Set) Empty() bool { return len(s.Packs)+len(s.Skills)+len(s.MCPs)+len(s.Except) == 0 }
 
 var (
 	// A table header that only introduces its sub-tables.
@@ -371,29 +348,6 @@ func (c *Catalog) check(names []string) error {
 }
 
 // AddSource records a source that takes all the skills it offers.
-func (c *Catalog) AddSource(source, url, ref string) {
-	if src, ok := c.Sources[source]; ok {
-		src.Skills = nil
-		return
-	}
-	c.Sources[source] = &Source{URL: url, Ref: ref}
-}
-
-// RemoveSource drops a source with its skills, from packs and the global set too.
-func (c *Catalog) RemoveSource(source string) {
-	src, ok := c.Sources[source]
-	if !ok {
-		return
-	}
-	for _, skill := range slices.Clone(src.Skills) {
-		c.RemoveSkill(skill)
-	}
-	delete(c.Sources, source)
-	for _, pack := range c.Packs {
-		pack.Sources = remove(pack.Sources, source)
-	}
-}
-
 // ExpandAll gives every source that takes all skills the names on offer in
 // its clone. A name stays with a source that lists it, and otherwise goes to
 // the first of the sources that offer it.
@@ -443,25 +397,6 @@ func (c *Catalog) AddSkills(source, url, ref string, skills []string) error {
 	return nil
 }
 
-// RemoveSkill drops a skill from its source, all packs and the global set.
-// A source left without skills is dropped too.
-func (c *Catalog) RemoveSkill(skill string) {
-	for name, src := range c.Sources {
-		src.Skills = remove(src.Skills, skill)
-		if len(src.Skills) == 0 {
-			delete(c.Sources, name)
-			for _, pack := range c.Packs {
-				pack.Sources = remove(pack.Sources, name)
-			}
-		}
-	}
-	for _, pack := range c.Packs {
-		pack.Skills = removeRef(pack.Skills, skill)
-	}
-	c.Enabled.Skills = removeRef(c.Enabled.Skills, skill)
-	c.Enabled.Except = removeRef(c.Enabled.Except, skill)
-}
-
 func (c *Catalog) CreatePack(name, description string, skills []string) error {
 	if _, ok := c.Packs[name]; ok {
 		return fmt.Errorf("pack %q already exists", name)
@@ -495,17 +430,10 @@ func (c *Catalog) PackAdd(name string, members []string) error {
 			recorded[i] = member
 		case !isMCP && isSkill:
 			recorded[i] = c.Qualify(member)
+		case isMCP:
+			return fmt.Errorf("unknown mcp server %q", server)
 		default:
-			spelling, known := "", false
-			if c.Lookup != nil {
-				spelling, known = c.Lookup(member)
-			}
-			if !known && isMCP {
-				return fmt.Errorf("unknown mcp server %q", server)
-			} else if !known {
-				return fmt.Errorf("unknown skill %q", member)
-			}
-			recorded[i] = spelling
+			return fmt.Errorf("unknown skill %q", member)
 		}
 	}
 	for i, member := range recorded {
@@ -529,35 +457,6 @@ func (c *Catalog) packSourceSkills(pack *Pack) []string {
 		}
 	}
 	return skills
-}
-
-// PackRemove takes skills, servers ("mcp:name") and sources ("owner/repo")
-// out of a pack. A skill that one of the pack's sources brings cannot be
-// taken out on its own.
-func (c *Catalog) PackRemove(name string, members []string) error {
-	pack, ok := c.Packs[name]
-	if !ok {
-		return fmt.Errorf("unknown pack %q", name)
-	}
-	for _, member := range members {
-		if slices.Contains(pack.Sources, member) {
-			pack.Sources = remove(pack.Sources, member)
-		} else if server, ok := strings.CutPrefix(member, MCPPrefix); ok {
-			pack.MCPs = remove(pack.MCPs, server)
-		} else if skill, _ := SplitRef(member); !containsRef(pack.Skills, skill) && slices.Contains(c.packSourceSkills(pack), skill) {
-			source, _ := c.SourceOf(skill)
-			return fmt.Errorf("skill %q is in pack %q through its source %s; disable the skill, or take the source out", skill, name, source)
-		} else {
-			pack.Skills = removeRef(pack.Skills, skill)
-		}
-	}
-	return nil
-}
-
-// RemovePack deletes a pack. Its skills stay in the catalog.
-func (c *Catalog) RemovePack(name string) {
-	delete(c.Packs, name)
-	c.Enabled.Packs = remove(c.Enabled.Packs, name)
 }
 
 func add(list []string, item string) []string {

@@ -28,23 +28,23 @@ func read(t *testing.T, file string) string {
 
 // withServers gives the app two servers, one of them needing a secret, in a
 // pack together with a skill.
-func withServers(t *testing.T, e env) {
+func withServers(t *testing.T, e *env) {
 	t.Helper()
 	e.add(t, false)
 	e.app.Local.Agents = []string{"claude-code", "codex"}
 	e.app.Local.MCPs["simctl"] = &catalog.MCP{Type: "local", Command: []string{"npx", "-y", "simctl-mcp"}}
 	e.app.Local.MCPs["tavily"] = &catalog.MCP{Type: "remote", URL: "https://mcp.tavily.com/mcp?tavilyApiKey=${TAVILY_API_KEY}"}
-	err := e.app.EditPack("ios", true, func(local *catalog.Catalog) error {
-		return local.CreatePack("ios", "Building for iOS", []string{"alpha", "mcp:simctl", "mcp:tavily"})
-	})
-	if err != nil {
+	if err := e.app.Local.CreatePack("ios", "Building for iOS", []string{"alpha", "mcp:simctl", "mcp:tavily"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.app.Save(); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestEnablingAPackWritesItsServers(t *testing.T) {
 	e := setup(t)
-	withServers(t, e)
+	withServers(t, &e)
 	claude, codex := filepath.Join(e.p.Home, ".claude.json"), filepath.Join(e.p.Home, ".codex", "config.toml")
 	write(t, claude, "{\n  \"numStartups\": 3\n}\n")
 
@@ -62,8 +62,9 @@ func TestEnablingAPackWritesItsServers(t *testing.T) {
 		t.Error("the pack's skill is linked too")
 	}
 
+	// A server that was left alone is not enabled; enabling again writes it.
 	writeSecrets(t, e, "TAVILY_API_KEY = \"tvly-secret\"\n")
-	if _, err := e.app.Sync(e.app.Global(), SyncOptions{}); err != nil {
+	if _, err := e.app.Toggle(e.app.Global(), true, "@ios"); err != nil {
 		t.Fatal(err)
 	}
 	if text := read(t, codex); !strings.Contains(text, `url = "https://mcp.tavily.com/mcp?tavilyApiKey=tvly-secret"`) {
@@ -80,8 +81,11 @@ func TestEnablingAPackWritesItsServers(t *testing.T) {
 	if _, err := e.app.Toggle(e.app.Global(), false, "mcp:tavily"); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(read(t, claude), "tavily") || !reflect.DeepEqual(e.app.Local.Enabled.Except, []string{"mcp:tavily"}) {
-		t.Errorf("disable one server of the pack: %+v", e.app.Local.Enabled)
+	if text := read(t, claude); strings.Contains(text, "tavily") || !strings.Contains(text, "simctl") {
+		t.Errorf("disable one server of the pack:\n%s", text)
+	}
+	if view, _ := e.app.View(); view.MCPs["tavily"].Global || !view.MCPs["simctl"].Global {
+		t.Errorf("the agents' configs are the state: %+v", view.MCPs)
 	}
 	if _, err := e.app.Toggle(e.app.Global(), false, "@ios"); err != nil {
 		t.Fatal(err)
@@ -89,14 +93,11 @@ func TestEnablingAPackWritesItsServers(t *testing.T) {
 	if text := read(t, claude); text != "{\n  \"numStartups\": 3,\n  \"mcpServers\": {\n  }\n}\n" && strings.Contains(text, "simctl") {
 		t.Errorf("after disabling the pack:\n%s", text)
 	}
-	if _, err := e.app.Remove("mcp:simctl"); err != nil || e.app.Catalog.MCPs["simctl"] != nil {
-		t.Errorf("remove: %v", err)
-	}
 }
 
 func TestServersAreGlobalOnly(t *testing.T) {
 	e := setup(t)
-	withServers(t, e)
+	withServers(t, &e)
 	scope, _ := e.app.ProjectScope()
 	if _, err := e.app.Toggle(scope, true, "mcp:simctl"); err == nil {
 		t.Error("a server cannot be enabled in a project")
@@ -112,7 +113,7 @@ func TestServersAreGlobalOnly(t *testing.T) {
 
 func TestRunWritesServersOnlyWhileTheCommandRuns(t *testing.T) {
 	e := setup(t)
-	withServers(t, e)
+	withServers(t, &e)
 	claude, codex := filepath.Join(e.p.Home, ".claude.json"), filepath.Join(e.p.Home, ".codex", "config.toml")
 
 	// A command that is no agent: the servers go to every configured agent.
@@ -130,7 +131,7 @@ func TestRunWritesServersOnlyWhileTheCommandRuns(t *testing.T) {
 
 func TestRunLimitsServersToTheAgentItStarts(t *testing.T) {
 	e := setup(t)
-	withServers(t, e)
+	withServers(t, &e)
 	claude, codex := filepath.Join(e.p.Home, ".claude.json"), filepath.Join(e.p.Home, ".codex", "config.toml")
 	gemini := filepath.Join(e.p.Home, ".gemini", "settings.json")
 
@@ -157,7 +158,7 @@ func TestRunLimitsServersToTheAgentItStarts(t *testing.T) {
 
 func TestEnablingOverwritesAnEntryOfTheSameName(t *testing.T) {
 	e := setup(t)
-	withServers(t, e)
+	withServers(t, &e)
 	claude := filepath.Join(e.p.Home, ".claude.json")
 	write(t, claude, `{"mcpServers": {"simctl": {"type": "http", "url": "https://old"}, "mine": {"url": "https://mine"}}}`)
 
@@ -185,7 +186,7 @@ func (f *fakeOnePassword) Fields(item secrets.Item) (map[string]string, error) {
 
 func TestSecretsComeFromOnePasswordItemsOnlyWhenNeeded(t *testing.T) {
 	e := setup(t)
-	withServers(t, e)
+	withServers(t, &e)
 	op := &fakeOnePassword{items: map[string]map[string]string{"personal": {"TAVILY_API_KEY": "from-1password"}}}
 	e.app.OnePassword = op
 	e.app.Local.Secrets = []catalog.SecretItem{{Account: "me.1password.com", Vault: "v", Item: "personal"}}
@@ -228,7 +229,7 @@ func TestSecretsComeFromOnePasswordItemsOnlyWhenNeeded(t *testing.T) {
 
 func TestAnUnreadableItemLeavesServersAlone(t *testing.T) {
 	e := setup(t)
-	withServers(t, e)
+	withServers(t, &e)
 	e.app.OnePassword = &fakeOnePassword{}
 	e.app.Local.Secrets = []catalog.SecretItem{{Account: "me.1password.com", Vault: "v", Item: "locked"}}
 	e.app.Save()

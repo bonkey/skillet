@@ -58,11 +58,10 @@ func manifest(source, url, skill string, includes ...string) string {
 		strings.Join(quoted, ", "), source, url, skill, skill, skill, skill, skill)
 }
 
-func TestSetRefPinsASource(t *testing.T) {
+func TestARefInTheConfigPinsASource(t *testing.T) {
 	e := setup(t)
 	e.add(t, true)
 	git(t, e.origin, "tag", "v1")
-	git(t, e.origin, "config", "uploadpack.allowAnySHA1InWant", "true")
 	write(t, filepath.Join(e.origin, "skills/alpha/SKILL.md"), "---\nname: alpha\ndescription: Second alpha\n---\n")
 	git(t, e.origin, "commit", "-qam", "second")
 	if _, err := e.app.Update(false); err != nil {
@@ -76,11 +75,9 @@ func TestSetRefPinsASource(t *testing.T) {
 		t.Fatalf("before pinning: %q", description())
 	}
 
-	if err := e.app.SetRef("acme/skills", "v1"); err != nil {
-		t.Fatal(err)
-	}
-	if description() != "The alpha skill" || e.app.Local.Sources["acme/skills"].Ref != "v1" {
-		t.Fatalf("pinned to v1: %q", description())
+	e.open(t, strings.Replace(read(t, e.p.ConfigFile()), "skills = ['alpha', 'beta']", "ref = 'v1'\nskills = ['alpha', 'beta']", 1))
+	if _, err := e.app.Update(false); err != nil || description() != "The alpha skill" {
+		t.Fatalf("pinned to v1: %q %v", description(), err)
 	}
 	pinned := e.app.Sources()[0].Commit
 	if _, err := e.app.Update(false); err != nil || e.app.Sources()[0].Commit != pinned {
@@ -89,19 +86,6 @@ func TestSetRefPinsASource(t *testing.T) {
 	data, _ := os.ReadFile(filepath.Join(e.p.Home, ".claude", "skills", "alpha", "SKILL.md"))
 	if !strings.Contains(string(data), "The alpha skill") {
 		t.Errorf("the enabled link must show the pinned content: %q", data)
-	}
-
-	if err := e.app.SetRef("acme/skills", pinned); err != nil {
-		t.Fatalf("pinning a commit: %v", err)
-	}
-	if err := e.app.SetRef("acme/skills", ""); err != nil || description() != "Second alpha" {
-		t.Errorf("back on the default branch: %q %v", description(), err)
-	}
-	if err := e.app.SetRef("acme/skills", "no-such-ref"); err == nil {
-		t.Error("expected an error for an unknown ref")
-	}
-	if e.app.Local.Sources["acme/skills"].Ref != "" {
-		t.Error("a failed change must not be saved")
 	}
 }
 
@@ -119,7 +103,7 @@ func TestPushAndPull(t *testing.T) {
 		t.Fatalf("pushed content:\n%s", gists.files[id])
 	}
 	e.app.Toggle(e.app.Global(), false, "beta")
-	if _, created, err = e.app.Push(false, false); err != nil || created || !strings.HasSuffix(gists.files[id], "[enabled]\nskills = ['alpha@acme/skills']\n") {
+	if _, created, err = e.app.Push(false, false); err != nil || created || !strings.HasSuffix(gists.files[id], "[enabled]\npacks = ['acme']\n") {
 		t.Fatalf("second push: %v %v\n%s", created, err, gists.files[id])
 	}
 
@@ -137,7 +121,7 @@ func TestPushAndPull(t *testing.T) {
 	if _, err := b.Pull(id); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := b.Enabled(b.Global()); !reflect.DeepEqual(got, []string{"alpha"}) {
+	if got, _ := b.Enabled(b.Global()); !reflect.DeepEqual(got, []string{"alpha", "beta"}) {
 		t.Errorf("enabled after pull: %v", got)
 	}
 	if !isLink(filepath.Join(other.Home, ".claude", "skills", "alpha")) {
@@ -185,24 +169,12 @@ func TestIncludesMergeOnceAndSurviveCycles(t *testing.T) {
 		t.Errorf("included entries must not be copied into the local catalog:\n%s", raw)
 	}
 
-	// Included entries are read-only, but can be switched off and grouped.
-	if _, err := e.app.Remove("alpha"); err == nil {
-		t.Error("removing an included skill should fail")
-	}
-	if err := e.app.EditPack("pack-alpha", false, func(*catalog.Catalog) error { return nil }); err == nil {
-		t.Error("editing an included pack should fail")
-	}
+	// An included skill can be switched off until the next sync.
 	if _, err := e.app.Toggle(e.app.Global(), false, "alpha"); err != nil {
 		t.Fatal(err)
 	}
-	if isLink(filepath.Join(global, "alpha")) || !reflect.DeepEqual(e.app.Local.Enabled.Except, []string{"alpha@acme/skills"}) {
-		t.Errorf("disable of an inherited skill: %+v", e.app.Local.Enabled)
-	}
-	err := e.app.EditPack("mine", true, func(local *catalog.Catalog) error {
-		return local.CreatePack("mine", "My pick", []string{"beta"})
-	})
-	if err != nil {
-		t.Errorf("a local pack may hold included skills: %v", err)
+	if isLink(filepath.Join(global, "alpha")) {
+		t.Error("disable of an inherited skill")
 	}
 
 	// A later start works from the cache.

@@ -33,6 +33,9 @@ type Session struct {
 	// Agent limits the session's MCP servers to the agent that the command
 	// starts. Empty means every configured agent.
 	Agent string `toml:"agent,omitempty"`
+	// Added lists the skills and servers ("mcp:name") of the set that were
+	// not enabled when the session started. They go away with the session.
+	Added []string `toml:"added,omitempty"`
 }
 
 func Write(dir string, pid int, s Session) error {
@@ -54,26 +57,36 @@ func Remove(dir string, pid int) error {
 	return err
 }
 
-// Live returns the sessions in dir whose launcher still runs. Files of dead
-// launchers are deleted.
-func Live(dir string) []Session {
+// Read returns the sessions in dir, split by whether their launcher still
+// runs.
+func Read(dir string) (live, dead []Session) {
 	entries, _ := os.ReadDir(dir)
-	var sets []Session
 	for _, entry := range entries {
 		pid, err := strconv.Atoi(strings.TrimSuffix(entry.Name(), ".toml"))
 		if err != nil {
 			continue
 		}
-		if !alive(pid) {
-			Remove(dir, pid)
+		var s Session
+		if data, err := os.ReadFile(file(dir, pid)); err != nil || toml.Unmarshal(data, &s) != nil {
 			continue
 		}
-		var s Session
-		if data, err := os.ReadFile(file(dir, pid)); err == nil && toml.Unmarshal(data, &s) == nil {
-			sets = append(sets, s)
+		if alive(pid) {
+			live = append(live, s)
+		} else {
+			dead = append(dead, s)
 		}
 	}
-	return sets
+	return live, dead
+}
+
+// Prune deletes the files of dead launchers.
+func Prune(dir string) {
+	entries, _ := os.ReadDir(dir)
+	for _, entry := range entries {
+		if pid, err := strconv.Atoi(strings.TrimSuffix(entry.Name(), ".toml")); err == nil && !alive(pid) {
+			Remove(dir, pid)
+		}
+	}
 }
 
 func alive(pid int) bool {

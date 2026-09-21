@@ -65,15 +65,38 @@ func setup(t *testing.T) env {
 	return env{app: a, origin: origin, p: p}
 }
 
-func (e env) add(t *testing.T, enable bool) {
-	t.Helper()
-	name, url, skills, err := e.app.Fetch(e.origin, "")
-	if err != nil || name != "acme/skills" || len(skills) != 2 {
-		t.Fatalf("fetch: %q %v %v", name, skills, err)
+// config is a catalog with the origin as its source, in the pack "acme".
+// Without a list of skills, the source takes all it offers.
+func (e env) config(skills, enabled string) string {
+	members := "skills = ['alpha', 'beta']"
+	if skills == "" {
+		members = "sources = ['acme/skills']"
 	}
-	err = e.app.Add(AddRequest{Source: name, URL: url, Skills: []string{"alpha", "beta"},
-		Pack: "acme", PackDescription: "Acme skills", Enable: enable})
+	return fmt.Sprintf("agents = ['claude-code']\n\n[sources.'acme/skills']\nurl = %q\n%s\n\n"+
+		"[packs.acme]\ndescription = 'Acme skills'\n%s\n\n%s", e.origin, skills, members, enabled)
+}
+
+// add writes a catalog with alpha and beta, optionally declared enabled,
+// and syncs the global scope.
+func (e *env) add(t *testing.T, enable bool) {
+	t.Helper()
+	enabled := ""
+	if enable {
+		enabled = "[enabled]\npacks = ['acme']\n"
+	}
+	e.open(t, e.config("skills = ['alpha', 'beta']", enabled))
+}
+
+func (e *env) open(t *testing.T, config string) {
+	t.Helper()
+	write(t, e.p.ConfigFile(), config)
+	a, err := OpenWith(e.p, e.app.Gists)
 	if err != nil {
+		t.Fatal(err)
+	}
+	a.OnePassword = e.app.OnePassword
+	e.app = a
+	if _, err := a.Sync(a.Global(), SyncOptions{}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -83,16 +106,20 @@ func isLink(path string) bool {
 	return err == nil
 }
 
-func TestAddEnableDisableRemove(t *testing.T) {
+func TestEnableAndDisableChangeLinksOnly(t *testing.T) {
 	e := setup(t)
 	global := filepath.Join(e.p.Home, ".claude", "skills")
 
 	e.add(t, false)
 	if isLink(filepath.Join(global, "alpha")) {
-		t.Fatal("added skills start disabled")
+		t.Fatal("skills start disabled")
 	}
+	before, _ := os.ReadFile(e.p.ConfigFile())
 	if _, err := e.app.Toggle(e.app.Global(), true, "@acme"); err != nil {
 		t.Fatal(err)
+	}
+	if got, _ := os.Readlink(filepath.Join(global, "alpha")); got != filepath.Join(e.p.RepoDir("acme/skills"), "skills", "alpha") {
+		t.Fatalf("the link goes straight into the clone: %q", got)
 	}
 	if _, err := os.Stat(filepath.Join(global, "alpha", "reference", "notes.md")); err != nil {
 		t.Fatal("the whole skill folder must be reachable through the link")
@@ -103,12 +130,11 @@ func TestAddEnableDisableRemove(t *testing.T) {
 	if isLink(filepath.Join(global, "beta")) || !isLink(filepath.Join(global, "alpha")) {
 		t.Fatal("disable beta: wrong links")
 	}
-
-	// The catalog file holds names only; a reopened app sees the same state.
-	raw, _ := os.ReadFile(e.p.ConfigFile())
-	if strings.Contains(string(raw), "The alpha skill") || strings.Contains(string(raw), "skills/alpha") {
-		t.Errorf("catalog leaks skill details:\n%s", raw)
+	if after, _ := os.ReadFile(e.p.ConfigFile()); string(after) != string(before) {
+		t.Errorf("the config file was written:\n%s", after)
 	}
+
+	// The links are the state: a reopened app sees it.
 	reopened, err := Open(e.p)
 	if err != nil {
 		t.Fatal(err)
@@ -119,18 +145,61 @@ func TestAddEnableDisableRemove(t *testing.T) {
 	if found, ok := reopened.Index.Lookup(reopened.Catalog, "alpha"); !ok || found.Description != "The alpha skill" {
 		t.Errorf("description comes from the skill: %+v", found)
 	}
+}
 
-	if _, err := e.app.Remove("@acme"); err != nil {
+func TestSyncEnablesWhatIsDeclaredAndFlagsTheRest(t *testing.T) {
+	e := setup(t)
+	global := filepath.Join(e.p.Home, ".claude", "skills")
+	e.open(t, e.config("skills = ['alpha', 'beta']", "[enabled]\nskills = ['alpha']\n"))
+	if !isLink(filepath.Join(global, "alpha")) || isLink(filepath.Join(global, "beta")) {
+		t.Fatal("sync links what the config declares")
+	}
+	if _, err := e.app.Toggle(e.app.Global(), true, "beta"); err != nil {
 		t.Fatal(err)
 	}
-	if isLink(filepath.Join(global, "alpha")) {
-		t.Error("removed skill is still linked")
+	report, err := e.app.Toggle(e.app.Global(), false, "alpha")
+	if err != nil || len(report.Notes) != 1 || !strings.Contains(report.Notes[0], "alpha") {
+		t.Fatalf("disabling a declared skill says that sync brings it back: %+v %v", report, err)
 	}
-	if _, err := os.Stat(e.p.RepoDir("acme/skills")); !os.IsNotExist(err) {
-		t.Error("unused clone was kept")
+
+	report, err = e.app.Sync(e.app.Global(), SyncOptions{})
+	if err != nil || !reflect.DeepEqual(report.Extra, []string{"beta"}) {
+		t.Fatalf("beta is extra: %+v %v", report, err)
 	}
-	if len(e.app.Catalog.Sources)+len(e.app.Catalog.Packs) != 0 {
-		t.Errorf("catalog not empty: %+v", e.app.Catalog)
+	if !isLink(filepath.Join(global, "alpha")) || !isLink(filepath.Join(global, "beta")) {
+		t.Fatal("sync brings alpha back and keeps beta")
+	}
+	if report, _ = e.app.Sync(e.app.Global(), SyncOptions{}); len(report.Actions) != 0 {
+		t.Errorf("sync is idempotent: %+v", report.Actions)
+	}
+
+	report, err = e.app.Sync(e.app.Global(), SyncOptions{Remove: true})
+	if err != nil || len(report.Extra) != 0 || isLink(filepath.Join(global, "beta")) || !isLink(filepath.Join(global, "alpha")) {
+		t.Fatalf("remove disables what is not declared: %+v %v", report, err)
+	}
+}
+
+func TestSyncGivesANewAgentTheSameLinks(t *testing.T) {
+	e := setup(t)
+	e.add(t, false)
+	if _, err := e.app.Toggle(e.app.Global(), true, "alpha"); err != nil {
+		t.Fatal(err)
+	}
+	e.app.UseAgents([]string{"claude-code", "codex"})
+	if _, err := e.app.Sync(e.app.Global(), SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(e.p.RepoDir("acme/skills"), "skills", "alpha")
+	if got, _ := os.Readlink(filepath.Join(e.p.Home, ".codex", "skills", "alpha")); got != want {
+		t.Errorf("codex link: %q", got)
+	}
+
+	e.app.UseAgents([]string{"codex"})
+	if _, err := e.app.Toggle(e.app.Global(), false, "alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if isLink(filepath.Join(e.p.Home, ".codex", "skills", "alpha")) || !isLink(filepath.Join(e.p.Home, ".claude", "skills", "alpha")) {
+		t.Error("with agents given, only their directories change")
 	}
 }
 
@@ -145,7 +214,7 @@ func TestForceReplacesConflictingEntries(t *testing.T) {
 		t.Fatalf("without force the folder stays: %+v %v", report, err)
 	}
 	e.app.Force = true
-	if _, err := e.app.Sync(e.app.Global(), SyncOptions{}); err != nil || !isLink(blocked) {
+	if _, err := e.app.Toggle(e.app.Global(), true, "alpha"); err != nil || !isLink(blocked) {
 		t.Fatalf("with force the folder is replaced by the link: %v", err)
 	}
 }
@@ -205,19 +274,7 @@ func TestViewFilter(t *testing.T) {
 
 func TestSourceThatTakesAllSkills(t *testing.T) {
 	e := setup(t)
-	name, url, found, err := e.app.Fetch(e.origin, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = e.app.Add(AddRequest{Source: name, URL: url, All: true, Skills: []string{"alpha", "beta"},
-		Pack: "acme", PackDescription: "Acme skills", Enable: true})
-	if err != nil || len(found) != 2 {
-		t.Fatal(err)
-	}
-	raw, _ := os.ReadFile(e.p.ConfigFile())
-	if strings.Contains(string(raw), "alpha") || !strings.Contains(string(raw), "sources = ['acme/skills']") {
-		t.Fatalf("the config names the source, not its skills:\n%s", raw)
-	}
+	e.open(t, e.config("", "[enabled]\npacks = ['acme']\n"))
 	global := filepath.Join(e.p.Home, ".claude", "skills")
 	if !isLink(filepath.Join(global, "alpha")) || !isLink(filepath.Join(global, "beta")) {
 		t.Fatal("all skills of the source are enabled")
@@ -240,24 +297,12 @@ func TestSourceThatTakesAllSkills(t *testing.T) {
 	if got, _ := reopened.Enabled(reopened.Global()); !reflect.DeepEqual(got, []string{"alpha", "beta", "gamma"}) {
 		t.Errorf("enabled after reopen: %v", got)
 	}
-
-	if _, err := e.app.Remove("alpha"); err == nil || !strings.Contains(err.Error(), "comes with all of") {
-		t.Errorf("a single skill of such a source cannot be removed: %v", err)
-	}
-	if _, err := e.app.Remove("acme/skills"); err != nil {
-		t.Fatal(err)
-	}
-	if isLink(filepath.Join(global, "alpha")) || len(e.app.Catalog.Sources) != 0 || len(e.app.Local.Packs["acme"].Sources) != 0 {
-		t.Errorf("removing the source removes its skills, links and pack membership: %+v", e.app.Local.Packs["acme"])
-	}
-	if _, err := os.Stat(e.p.RepoDir("acme/skills")); !os.IsNotExist(err) {
-		t.Error("the clone should be gone")
-	}
 }
 
 func TestProjectScope(t *testing.T) {
 	e := setup(t)
 	e.add(t, false)
+	os.MkdirAll(filepath.Join(e.p.Cwd, ".git"), 0o755)
 	scope, err := e.app.ProjectScope()
 	if err != nil || scope.Root != e.p.Cwd {
 		t.Fatalf("scope %+v", scope)
@@ -271,11 +316,11 @@ func TestProjectScope(t *testing.T) {
 	if isLink(filepath.Join(e.p.Home, ".claude", "skills", "alpha")) {
 		t.Error("project enable leaked into the global scope")
 	}
-	if _, err := os.Stat(filepath.Join(e.p.Cwd, paths.ManifestName)); err != nil {
-		t.Error("manifest was not written")
+	if _, err := os.Stat(filepath.Join(e.p.Cwd, paths.ManifestName)); !os.IsNotExist(err) {
+		t.Error("enabling must not write a manifest")
 	}
 
-	// The manifest is found from a subdirectory.
+	// The repository is found from a subdirectory.
 	sub := e.p
 	sub.Cwd = filepath.Join(e.p.Cwd, "deep", "er")
 	os.MkdirAll(sub.Cwd, 0o755)
@@ -283,12 +328,59 @@ func TestProjectScope(t *testing.T) {
 	if got, _ := below.ProjectScope(); got.Root != e.p.Cwd {
 		t.Errorf("root from subdirectory: %s", got.Root)
 	}
+	if view, _ := below.View(); !view.Skills["alpha"].Project || view.Skills["alpha"].Global {
+		t.Errorf("the view reads the project's links: %+v", view.Skills["alpha"])
+	}
 
 	home := e.p
 	home.Cwd = e.p.Home
 	atHome, _ := Open(home)
 	if _, err := atHome.ProjectScope(); err == nil {
 		t.Error("the home directory must not become a project")
+	}
+}
+
+func TestProjectManifestIsACatalogOfItsOwn(t *testing.T) {
+	e := setup(t)
+	e.open(t, "agents = ['claude-code', 'codex']\n")
+	write(t, filepath.Join(e.p.Cwd, paths.ManifestName), fmt.Sprintf(
+		"[sources.'acme/skills']\nurl = %q\nskills = ['alpha', 'beta']\n\n[packs.acme]\ndescription = 'Acme skills'\n"+
+			"skills = ['alpha', 'beta']\n\n[enabled]\npacks = ['acme']\nexcept = ['beta']\n", e.origin))
+	sub := e.p
+	sub.Cwd = filepath.Join(e.p.Cwd, "deep")
+	os.MkdirAll(sub.Cwd, 0o755)
+	a, err := Open(sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope, _ := a.ProjectScope()
+	if scope.Root != e.p.Cwd {
+		t.Fatalf("the manifest marks the project root: %s", scope.Root)
+	}
+	if _, err := a.Sync(scope, SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(e.p.RepoDir("acme/skills"), "skills", "alpha")
+	for _, dir := range []string{".claude/skills", ".agents/skills"} {
+		if got, _ := os.Readlink(filepath.Join(e.p.Cwd, dir, "alpha")); got != want {
+			t.Errorf("%s/alpha -> %q", dir, got)
+		}
+		if isLink(filepath.Join(e.p.Cwd, dir, "beta")) {
+			t.Errorf("%s/beta is excepted", dir)
+		}
+	}
+	if _, err := a.Sync(a.Global(), SyncOptions{}); err != nil || isLink(filepath.Join(e.p.Home, ".claude", "skills", "alpha")) {
+		t.Errorf("a manifest enables for its project only: %v", err)
+	}
+	if view, _ := a.View(); view.Skills["alpha"].From != paths.ManifestName || !view.Skills["alpha"].Project {
+		t.Errorf("view: %+v", view.Skills["alpha"])
+	}
+
+	outside := e.p
+	outside.Cwd = filepath.Join(e.p.Home, "other")
+	os.MkdirAll(outside.Cwd, 0o755)
+	if elsewhere, _ := Open(outside); elsewhere.Catalog.HasSkill("alpha") {
+		t.Error("outside the project its catalog is unknown")
 	}
 }
 
@@ -382,12 +474,12 @@ func TestImport(t *testing.T) {
 		t.Errorf("report: %+v", report)
 	}
 	for _, name := range []string{"alpha", "beta"} {
-		got, _ := os.Readlink(filepath.Join(legacy, name))
+		got, _ := os.Readlink(filepath.Join(global, name))
 		if want := filepath.Join(e.p.RepoDir("acme/skills"), "skills", name); got != want {
-			t.Errorf("~/.agents/skills/%s -> %q, want %s", name, got, want)
+			t.Errorf("~/.claude/skills/%s -> %q, want %s", name, got, want)
 		}
-		if got, _ := os.Readlink(filepath.Join(global, name)); got != "../../.agents/skills/"+name {
-			t.Errorf("~/.claude/skills/%s -> %q", name, got)
+		if _, err := os.Lstat(filepath.Join(legacy, name)); !os.IsNotExist(err) {
+			t.Errorf("the installed copy of %s must be deleted", name)
 		}
 	}
 	if data, _ := os.ReadFile(filepath.Join(global, "alpha", "SKILL.md")); !strings.Contains(string(data), "Fresh alpha") {

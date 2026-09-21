@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"runtime/debug"
+	"slices"
 	"sort"
 	"strings"
 
@@ -13,13 +14,18 @@ import (
 	"golang.org/x/term"
 
 	"github.com/bonkey/skillet/internal/app"
-	"github.com/bonkey/skillet/internal/catalog"
+	"github.com/bonkey/skillet/internal/link"
+	"github.com/bonkey/skillet/internal/mcp"
 	"github.com/bonkey/skillet/internal/paths"
 	"github.com/bonkey/skillet/internal/tui"
 )
 
-// force is the global --force flag.
-var force bool
+// The global flags.
+var (
+	force   bool
+	verbose bool
+	agents  []string
+)
 
 // version is set by release builds. Other builds report the module version
 // from the Go build info.
@@ -50,6 +56,14 @@ func open() (*app.App, error) {
 	a, err := app.Open(p)
 	if err == nil {
 		a.Force = force
+		for _, name := range agents {
+			if _, ok := link.Agents[name]; !ok {
+				return nil, fmt.Errorf("unknown agent %q", name)
+			}
+		}
+		if len(agents) > 0 {
+			a.UseAgents(agents)
+		}
 		for _, warning := range a.Warnings {
 			fmt.Fprintln(os.Stderr, "warning:", warning)
 		}
@@ -83,8 +97,11 @@ or "name@owner/repo" is a skill.`,
 	}
 	cmd.PersistentFlags().BoolVar(&force, "force", false,
 		"delete files, folders and links that stand where an enabled skill goes, and link the skill")
-	cmd.AddCommand(importCmd(), addCmd(), removeCmd(), packCmd(), toggleCmd(true), toggleCmd(false),
-		syncCmd(), listCmd(), updateCmd(), runCmd(), sourcesCmd(), refCmd(), gistCmd(), mcpCmd())
+	cmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "print every link and config entry that changes")
+	cmd.PersistentFlags().StringSliceVar(&agents, "agents", nil,
+		"act on these agents instead of those in the catalog (comma separated)")
+	cmd.AddCommand(importCmd(), toggleCmd(true), toggleCmd(false),
+		syncCmd(), listCmd(), updateCmd(), runCmd(), sourcesCmd(), gistCmd(), mcpCmd())
 	return cmd
 }
 
@@ -110,22 +127,52 @@ func tilde(text string) string {
 	return text
 }
 
+// printSync prints one line per kind of change, and every change with
+// --verbose. Problems are always printed in full.
 func printSync(report app.SyncReport) {
+	skills, servers := map[string][]string{}, map[string][]string{}
 	for _, action := range report.Actions {
-		fmt.Println(tilde(action.String()))
+		if verbose || action.Op == link.OpConflict {
+			fmt.Println(tilde(action.String()))
+		}
+		if !slices.Contains(skills[action.Op], action.Name) {
+			skills[action.Op] = append(skills[action.Op], action.Name)
+		}
+	}
+	for _, action := range report.MCP {
+		if verbose {
+			fmt.Println(tilde(action.String()))
+		}
+		if !slices.Contains(servers[action.Op], action.Name) {
+			servers[action.Op] = append(servers[action.Op], action.Name)
+		}
+	}
+	scope := tilde(report.Scope.String())
+	if !verbose {
+		for _, op := range []string{link.OpLink, link.OpRelink, link.OpReplace, link.OpUnlink} {
+			if names := skills[op]; len(names) > 0 {
+				fmt.Printf("%-8s %s: %s\n", op, scope, strings.Join(names, ", "))
+			}
+		}
+		for _, op := range []string{mcp.OpAdd, mcp.OpUpdate, mcp.OpRemove} {
+			if names := servers[op]; len(names) > 0 {
+				fmt.Printf("%-12s %s\n", op, strings.Join(names, ", "))
+			}
+		}
 	}
 	for _, name := range report.Missing {
 		fmt.Printf("missing  %s is enabled but not found in its source\n", name)
 	}
-	for _, action := range report.MCP {
-		fmt.Println(tilde(action.String()))
+	if len(report.Extra) > 0 {
+		fmt.Printf("extra    %s: enabled in %s without being declared in its config file; `sync --remove` disables them\n",
+			strings.Join(report.Extra, ", "), scope)
 	}
 	for _, name := range sortedKeys(report.MissingSecrets) {
 		fmt.Printf("missing-secret mcp:%s is left as it is: no value for %s in the 1Password items or in %s\n",
 			name, strings.Join(report.MissingSecrets[name], ", "), "secrets.toml")
 	}
 	for _, note := range report.Notes {
-		fmt.Println("note    ", note)
+		fmt.Println("note    ", tilde(note))
 	}
 }
 
@@ -139,8 +186,9 @@ func importCmd() *cobra.Command {
 
 Only the definitions (source and skill name) come from the lock. The content
 of every source is fetched fresh. Each imported skill's folder in
-~/.agents/skills is DELETED and replaced by a link into the fetched clone;
-folders that are not in the lock stay. Review with --dry-run first.`,
+~/.agents/skills is DELETED; where a configured agent reads that directory, a
+link into the fetched clone takes its place. Folders that are not in the lock
+stay. Review with --dry-run first.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := open()
@@ -178,147 +226,16 @@ folders that are not in the lock stay. Review with --dry-run first.`,
 	return cmd
 }
 
-func addCmd() *cobra.Command {
-	var skills []string
-	var all, enable bool
-	var pack, packDescription, ref string
-	cmd := &cobra.Command{
-		Use:   "add <owner/repo|url>",
-		Short: "Add skills of a source to the catalog; without --skill/--all, list what the source offers",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			a, err := open()
-			if err != nil {
-				return err
-			}
-			name, url, found, err := a.Fetch(args[0], ref)
-			if err != nil {
-				return err
-			}
-			if all {
-				skills = sortedKeys(found)
-			}
-			if len(skills) == 0 {
-				defer a.DropUnusedClone(name)
-				for _, skill := range sortedKeys(found) {
-					fmt.Printf("%-32s %s\n", skill, found[skill].Description)
-				}
-				return nil
-			}
-			for _, skill := range skills {
-				if _, ok := found[skill]; !ok {
-					a.DropUnusedClone(name)
-					return fmt.Errorf("%s has no skill %q", name, skill)
-				}
-			}
-			err = a.Add(app.AddRequest{Source: name, URL: url, Ref: ref, All: all, Skills: skills,
-				Pack: pack, PackDescription: packDescription, Enable: enable})
-			if err != nil {
-				a.DropUnusedClone(name)
-				return err
-			}
-			fmt.Printf("added %d skills from %s\n", len(skills), name)
-			return nil
-		},
-	}
-	cmd.Flags().StringSliceVarP(&skills, "skill", "s", nil, "skills to add (repeatable, comma separated)")
-	cmd.Flags().BoolVar(&all, "all", false, "take every skill the source offers, also those it gains later")
-	cmd.Flags().StringVar(&pack, "pack", "", "put the skills in this pack")
-	cmd.Flags().StringVar(&packDescription, "pack-description", "", "description for --pack when the pack is new")
-	cmd.Flags().StringVar(&ref, "ref", "", "branch or tag to track (default: the default branch)")
-	cmd.Flags().BoolVar(&enable, "enable", false, "enable the skills globally")
-	cmd.MarkFlagsMutuallyExclusive("skill", "all")
-	return cmd
-}
-
-func removeCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "remove <skill|mcp:server|owner/repo|@pack>...",
-		Short: "Remove skills, servers or whole sources from the catalog; @pack removes the pack and what it holds",
-		Args:  cobra.MinimumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			a, err := open()
-			if err != nil {
-				return err
-			}
-			report, err := a.Remove(args...)
-			printSync(report)
-			return err
-		},
-	}
-	return cmd
-}
-
-func packCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "pack", Short: "Edit packs"}
-	edit := func(fn func(local *catalog.Catalog, args []string) error) func(*cobra.Command, []string) error {
-		return func(cmd *cobra.Command, args []string) error {
-			a, err := open()
-			if err != nil {
-				return err
-			}
-			return a.EditPack(args[0], cmd.Name() == "create", func(local *catalog.Catalog) error { return fn(local, args) })
-		}
-	}
-
-	var description string
-	create := &cobra.Command{
-		Use:   "create <pack> --description <text> [skill...]",
-		Short: "Create a pack",
-		Args:  cobra.MinimumNArgs(1),
-		RunE: edit(func(local *catalog.Catalog, args []string) error {
-			return local.CreatePack(args[0], description, args[1:])
-		}),
-	}
-	create.Flags().StringVarP(&description, "description", "d", "", "what the pack is for (required)")
-
-	cmd.AddCommand(create,
-		&cobra.Command{
-			Use:   "add <pack> <skill|mcp:server|owner/repo>...",
-			Short: "Add skills, servers or whole sources to a pack",
-			Args:  cobra.MinimumNArgs(2),
-			RunE:  edit(func(local *catalog.Catalog, args []string) error { return local.PackAdd(args[0], args[1:]) }),
-		},
-		&cobra.Command{
-			Use:   "rm <pack> [skill|mcp:server|owner/repo...]",
-			Short: "Take members out of a pack; without members, delete the pack and keep its skills",
-			Args:  cobra.MinimumNArgs(1),
-			RunE: edit(func(local *catalog.Catalog, args []string) error {
-				if len(args) > 1 {
-					return local.PackRemove(args[0], args[1:])
-				}
-				if _, ok := local.Packs[args[0]]; !ok {
-					return fmt.Errorf("unknown pack %q", args[0])
-				}
-				local.RemovePack(args[0])
-				return nil
-			}),
-		},
-		&cobra.Command{
-			Use:   "describe <pack> <text>",
-			Short: "Set the description of a pack",
-			Args:  cobra.ExactArgs(2),
-			RunE: edit(func(local *catalog.Catalog, args []string) error {
-				pack, ok := local.Packs[args[0]]
-				if !ok {
-					return fmt.Errorf("unknown pack %q", args[0])
-				}
-				if strings.TrimSpace(args[1]) == "" {
-					return errors.New("a pack needs a description")
-				}
-				pack.Description = args[1]
-				return nil
-			}),
-		})
-	return cmd
-}
-
 func toggleCmd(enable bool) *cobra.Command {
-	use, short := "disable", "Disable skills and packs in a scope"
+	use, short := "disable", "Disable skills, servers and packs in a scope"
 	if enable {
-		use, short = "enable", "Enable skills and packs in a scope"
+		use, short = "enable", "Enable skills, servers and packs in a scope"
 	}
-	cmd := &cobra.Command{Use: use + " <skill|@pack>...", Short: short, Args: cobra.MinimumNArgs(1)}
+	cmd := &cobra.Command{Use: use + " <skill|mcp:server|@pack>...", Short: short, Args: cobra.MinimumNArgs(1),
+		Long: short + `.
+
+Only links and the agents' MCP entries change; no config file is written.
+What a config file declares under "enabled" comes back with the next sync.`}
 	scope := scopeFlags(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		a, err := open()
@@ -331,20 +248,31 @@ func toggleCmd(enable bool) *cobra.Command {
 		}
 		report, err := a.Toggle(s, enable, args...)
 		printSync(report)
+		if err == nil && len(report.Actions)+len(report.MCP)+len(report.Missing)+len(report.MissingSecrets) == 0 {
+			fmt.Println("nothing to change in", tilde(s.String()))
+		}
 		return err
 	}
 	return cmd
 }
 
 func syncCmd() *cobra.Command {
-	var dryRun bool
+	var dryRun, remove bool
 	cmd := &cobra.Command{
 		Use:   "sync",
-		Short: "Make the links match the declared state (global and, inside a project, the project)",
-		Args:  cobra.NoArgs,
+		Short: "Enable what the config files declare and repair the links (global and the project)",
+		Long: `Enable what the config files declare and repair the links.
+
+"enabled" in config.toml is the global scope, "enabled" in the project's
+.skillet.toml the project. Sources without a clone are cloned, every agent
+directory gets the same links, and a link follows a skill that moved inside
+its source. What is enabled without being declared stays and is reported as
+"extra"; --remove disables it.`,
+		Args: cobra.NoArgs,
 	}
 	scope := scopeFlags(cmd)
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "only print what would change")
+	cmd.Flags().BoolVar(&remove, "remove", false, "disable what is enabled without being declared")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		a, err := open()
 		if err != nil {
@@ -356,12 +284,13 @@ func syncCmd() *cobra.Command {
 		}
 		scopes := []app.Scope{chosen}
 		if !cmd.Flags().Changed("global") && !cmd.Flags().Changed("project") {
-			if root, ok := a.Paths.ProjectRoot(); ok {
-				scopes = append(scopes, app.Scope{Project: true, Root: root})
+			if project, err := a.ProjectScope(); err == nil {
+				scopes = append(scopes, project)
 			}
 		}
+		verbose = verbose || dryRun
 		for _, s := range scopes {
-			report, err := a.Sync(s, app.SyncOptions{DryRun: dryRun})
+			report, err := a.Sync(s, app.SyncOptions{DryRun: dryRun, Remove: remove})
 			printSync(report)
 			if err != nil {
 				return err
@@ -430,7 +359,7 @@ func printView(view app.View) {
 			mark = "!"
 		}
 		if pack.From != "" {
-			name += " (gist " + short(pack.From) + ")"
+			name += " (" + app.OriginName(short(pack.From)) + ")"
 		}
 		fmt.Printf("\n%s%s  %s\n", mark, name, pack.Description)
 		for _, skillName := range pack.Skills {
@@ -583,49 +512,6 @@ func sourcesCmd() *cobra.Command {
 	return cmd
 }
 
-func refCmd() *cobra.Command {
-	var useDefault bool
-	cmd := &cobra.Command{
-		Use:   "ref <source> [<branch|tag|commit>]",
-		Short: "Make a source track a branch, a tag or a full commit hash",
-		Long: `Make a source track a branch, a tag or a full commit hash.
-
-A branch moves forward on every update. A tag or a commit keeps the source at
-the version you evaluated. Without a ref, print what the source tracks.`,
-		Args: cobra.RangeArgs(1, 2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			a, err := open()
-			if err != nil {
-				return err
-			}
-			if len(args) == 1 && !useDefault {
-				for _, src := range a.Sources() {
-					if src.Name == args[0] {
-						fmt.Printf("%s tracks %q at %s\n", src.Name, src.Ref, short(src.Commit))
-						return nil
-					}
-				}
-				return fmt.Errorf("unknown source %q", args[0])
-			}
-			ref := ""
-			if len(args) == 2 {
-				ref = args[1]
-			}
-			if err := a.SetRef(args[0], ref); err != nil {
-				return err
-			}
-			for _, src := range a.Sources() {
-				if src.Name == args[0] {
-					fmt.Printf("%s is at %s\n", src.Name, short(src.Commit))
-				}
-			}
-			return nil
-		},
-	}
-	cmd.Flags().BoolVar(&useDefault, "default", false, "track the default branch again")
-	return cmd
-}
-
 func gistCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "gist",
@@ -741,7 +627,6 @@ skills. Enable and disable them like skills, written "mcp:<name>":
 
   skillet enable @ios mcp:tavily
   skillet disable mcp:simctl
-  skillet pack add ios mcp:sosumi
   skillet run @ios -- claude
 
 Enabled servers are written into the user configs of the agents listed under

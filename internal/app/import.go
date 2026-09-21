@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -24,8 +25,9 @@ func (a *App) LegacyLock() string { return filepath.Join(a.Paths.Home, ".agents"
 // definitions come from the lock; the content of every source is fetched
 // fresh. The locked skills are added, put in one pack per source and enabled
 // globally, and the folders the `skills` CLI installed in ~/.agents/skills
-// are deleted in favour of links into the clones. A dry run fetches too,
-// but writes neither the catalog nor any link.
+// are deleted: links into the clones take their place where a configured
+// agent reads that directory. A dry run fetches too, but writes neither the
+// catalog nor any link.
 func (a *App) Import(lockFile string, dryRun bool) (ImportReport, error) {
 	report := ImportReport{Renamed: map[string]string{}, Skipped: map[string]string{}}
 	entries, skipped, err := importer.Read(lockFile)
@@ -121,5 +123,16 @@ func (a *App) Import(lockFile string, dryRun bool) (ImportReport, error) {
 		DryRun:  dryRun,
 		Replace: func(name string) bool { return slices.Contains(report.Imported, name) },
 	})
-	return report, err
+	if err != nil || dryRun {
+		return report, err
+	}
+	for _, name := range report.Imported {
+		installed := filepath.Join(a.Paths.Home, ".agents", "skills", name)
+		if info, statErr := os.Lstat(installed); statErr == nil && info.IsDir() {
+			if err := os.RemoveAll(installed); err != nil {
+				return report, err
+			}
+		}
+	}
+	return report, nil
 }

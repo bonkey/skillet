@@ -5,7 +5,6 @@ package tui
 import (
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -14,9 +13,6 @@ import (
 
 	"github.com/bonkey/skillet/internal/app"
 	"github.com/bonkey/skillet/internal/catalog"
-	"github.com/bonkey/skillet/internal/importer"
-	"github.com/bonkey/skillet/internal/paths"
-	"github.com/bonkey/skillet/internal/source"
 )
 
 type mode int
@@ -24,9 +20,7 @@ type mode int
 const (
 	modeList mode = iota
 	modeFilter
-	modeInput
 	modeConfirm
-	modePick
 )
 
 // row is a skill, an MCP server, or a pack header when both are empty.
@@ -43,14 +37,6 @@ func (r row) member() string {
 	return "@" + r.pack
 }
 
-type picker struct {
-	source, url string
-	found       map[string]source.Skill
-	names       []string
-	picked      map[string]bool
-	cursor      int
-}
-
 type Model struct {
 	app   *app.App
 	view  app.View
@@ -62,28 +48,20 @@ type Model struct {
 	collapsed map[string]bool
 	filter    string
 
+	// marks holds the changes that wait for the confirmation, per scope
+	// (keyed by Scope.Project): a skill, or a server as "mcp:name", and
+	// whether it gets enabled.
+	marks map[bool]map[string]bool
+
 	mode     mode
 	input    textinput.Model
-	label    string
-	onSubmit func(*Model, string) tea.Cmd
+	question string
 	onYes    func(*Model) tea.Cmd
-	pick     picker
 
 	status string
 	busy   bool
 	width  int
 	height int
-}
-
-type fetchedMsg struct {
-	source, url string
-	found       map[string]source.Skill
-	err         error
-}
-
-type refMsg struct {
-	source string
-	err    error
 }
 
 type updatedMsg struct {
@@ -101,7 +79,7 @@ func Run(a *app.App) error {
 }
 
 func New(a *app.App) (*Model, error) {
-	m := &Model{app: a, scope: a.Global(), collapsed: map[string]bool{}, input: textinput.New(), width: 100, height: 30}
+	m := &Model{app: a, scope: a.Global(), collapsed: map[string]bool{}, marks: map[bool]map[string]bool{false: {}, true: {}}, input: textinput.New(), width: 100, height: 30}
 	return m, m.reload()
 }
 
@@ -114,6 +92,14 @@ func (m *Model) reload() error {
 		return err
 	}
 	m.view = view
+	for _, marks := range m.marks {
+		for member := range marks {
+			server, isMCP := strings.CutPrefix(member, catalog.MCPPrefix)
+			if _, ok := view.Skills[member]; !ok && (!isMCP || view.MCPs[server].Name == "") {
+				delete(marks, member)
+			}
+		}
+	}
 	m.rebuild()
 	return nil
 }
@@ -169,57 +155,56 @@ func (m *Model) pack(name string) app.PackView {
 	return app.PackView{}
 }
 
-// enabled reports whether the active scope declares the skill enabled.
-func (m *Model) enabled(skill string) bool {
-	if m.scope.Project {
-		return m.view.Skills[skill].Project
+// enabled reports whether a skill, or a server as "mcp:name", is enabled in
+// the active scope.
+func (m *Model) enabled(member string) bool {
+	if server, ok := strings.CutPrefix(member, catalog.MCPPrefix); ok {
+		return m.view.MCPs[server].Global
 	}
-	return m.view.Skills[skill].Global
+	if m.scope.Project {
+		return m.view.Skills[member].Project
+	}
+	return m.view.Skills[member].Global
+}
+
+// on reports the state a member has once the marks are applied.
+func (m *Model) on(member string) bool {
+	if enable, marked := m.marks[m.scope.Project][member]; marked {
+		return enable
+	}
+	return m.enabled(member)
+}
+
+// packMembers lists what a pack holds in the active scope. Servers count in
+// the global scope only.
+func (m *Model) packMembers(pack app.PackView) []string {
+	members := slices.Clone(pack.Skills)
+	if !m.scope.Project {
+		for _, server := range pack.MCPs {
+			members = append(members, catalog.MCPPrefix+server)
+		}
+	}
+	return members
 }
 
 // members counts what a pack holds in the active scope, and how much of it
-// is enabled. Servers count in the global scope only.
-func (m *Model) members(pack app.PackView) (enabled, total int) {
-	for _, skill := range pack.Skills {
+// is on once the marks are applied.
+func (m *Model) members(pack app.PackView) (on, total int) {
+	for _, member := range m.packMembers(pack) {
 		total++
-		if m.enabled(skill) {
-			enabled++
+		if m.on(member) {
+			on++
 		}
 	}
-	if !m.scope.Project {
-		for _, server := range pack.MCPs {
-			total++
-			if m.view.MCPs[server].Global {
-				enabled++
-			}
-		}
-	}
-	return enabled, total
+	return on, total
 }
+
+func (m *Model) marked() int { return len(m.marks[false]) + len(m.marks[true]) }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		return m, nil
-	case fetchedMsg:
-		m.busy, m.status = false, ""
-		if msg.err != nil {
-			m.status = "add failed: " + msg.err.Error()
-			return m, nil
-		}
-		m.pick = picker{source: msg.source, url: msg.url, found: msg.found, picked: map[string]bool{}}
-		for name := range msg.found {
-			m.pick.names = append(m.pick.names, name)
-		}
-		sort.Strings(m.pick.names)
-		m.mode = modePick
-		return m, nil
-	case refMsg:
-		m.busy = false
-		m.fail(m.reload())
-		m.status = m.source(msg.source)
-		m.fail(msg.err)
 		return m, nil
 	case updatedMsg:
 		m.busy = false
@@ -231,12 +216,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		switch m.mode {
-		case modeFilter, modeInput:
+		case modeFilter:
 			return m, m.updateInput(msg)
 		case modeConfirm:
-			return m, m.updateConfirm(msg)
-		case modePick:
-			return m, m.updatePick(msg)
+			m.mode = modeList
+			if msg.String() == "y" {
+				return m, m.onYes(m)
+			}
+			m.status = "cancelled"
+			return m, nil
 		}
 		return m, m.updateList(msg)
 	}
@@ -253,7 +241,10 @@ func (m *Model) updateList(msg tea.KeyMsg) tea.Cmd {
 	m.status = ""
 	switch msg.String() {
 	case "q", "ctrl+c":
-		return tea.Quit
+		if m.marked() == 0 {
+			return tea.Quit
+		}
+		m.confirm(fmt.Sprintf("quit and drop %d marked changes?", m.marked()), func(*Model) tea.Cmd { return tea.Quit })
 	case "up", "k":
 		m.cursor = max(0, m.cursor-1)
 	case "down", "j":
@@ -277,33 +268,26 @@ func (m *Model) updateList(msg tea.KeyMsg) tea.Cmd {
 			}
 		}
 	case " ":
-		m.toggle()
+		m.mark()
+	case "a":
+		m.askApply()
 	case "tab":
 		m.switchScope()
 	case "/":
-		m.ask(modeFilter, "filter", m.filter, nil)
+		m.mode = modeFilter
+		m.input.SetValue(m.filter)
+		m.input.CursorEnd()
+		m.input.Focus()
 	case "esc":
+		if m.filter == "" && m.marked() > 0 {
+			m.confirm(fmt.Sprintf("drop %d marked changes?", m.marked()), func(m *Model) tea.Cmd {
+				clear(m.marks[false])
+				clear(m.marks[true])
+				return nil
+			})
+		}
 		m.filter = ""
 		m.rebuild()
-	case "a":
-		m.ask(modeInput, "add source (owner/repo or git URL)", "", func(m *Model, value string) tea.Cmd {
-			if value == "" {
-				return nil
-			}
-			m.busy, m.status = true, "cloning "+value+"…"
-			return func() tea.Msg {
-				name, url, found, err := m.app.Fetch(value, "")
-				return fetchedMsg{source: name, url: url, found: found, err: err}
-			}
-		})
-	case "d":
-		m.askRemove()
-	case "p":
-		m.askPack()
-	case "e":
-		m.askDescribe()
-	case "r":
-		m.askRef()
 	case "u":
 		m.busy, m.status = true, "updating sources…"
 		return func() tea.Msg {
@@ -314,42 +298,105 @@ func (m *Model) updateList(msg tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
-func (m *Model) toggle() {
+func (m *Model) confirm(question string, onYes func(*Model) tea.Cmd) {
+	m.mode, m.question, m.onYes = modeConfirm, question, onYes
+}
+
+// mark notes the change of the selected row for the confirmation. Marking a
+// row again takes the change back.
+func (m *Model) mark() {
 	r, ok := m.current()
 	if !ok {
 		return
 	}
-	var names []string
-	var enable bool
+	members, enable := []string{r.member()}, !m.on(r.member())
 	switch {
 	case r.mcp != "" && m.scope.Project:
 		m.status = "MCP servers are global: switch the scope with tab, or use `skillet run`"
 		return
-	case r.mcp != "":
-		names, enable = []string{r.member()}, !m.view.MCPs[r.mcp].Global
-	case r.skill != "":
-		names, enable = []string{r.skill}, !m.enabled(r.skill)
-	default:
+	case r.skill == "" && r.mcp == "":
 		pack := m.pack(r.pack)
 		on, total := m.members(pack)
-		enable = on < total
-		names = []string{r.member()}
-		if r.pack == app.NoPack {
-			names = slices.Clone(pack.Skills)
-			if !m.scope.Project {
-				for _, server := range pack.MCPs {
-					names = append(names, catalog.MCPPrefix+server)
-				}
-			}
+		members, enable = m.packMembers(pack), on < total
+	}
+	marks := m.marks[m.scope.Project]
+	for _, member := range members {
+		if m.enabled(member) == enable {
+			delete(marks, member)
+		} else {
+			marks[member] = enable
 		}
 	}
-	if len(names) == 0 {
+}
+
+// changes lists the marks of one scope as arguments for Toggle.
+func (m *Model) changes(project bool) (enable, disable []string) {
+	for member, on := range m.marks[project] {
+		if on {
+			enable = append(enable, member)
+		} else {
+			disable = append(disable, member)
+		}
+	}
+	slices.Sort(enable)
+	slices.Sort(disable)
+	return enable, disable
+}
+
+// askApply asks once for all marked changes of both scopes.
+func (m *Model) askApply() {
+	if m.marked() == 0 {
+		m.status = "nothing is marked: space marks a skill, a server or a pack"
 		return
 	}
-	report, err := m.app.Toggle(m.scope, enable, names...)
-	m.status = syncSummary(report)
-	m.fail(err)
+	var parts []string
+	for _, project := range []bool{false, true} {
+		enable, disable := m.changes(project)
+		scope := map[bool]string{false: "global", true: "project"}[project]
+		if len(enable) > 0 {
+			parts = append(parts, fmt.Sprintf("enable %s (%s)", strings.Join(enable, ", "), scope))
+		}
+		if len(disable) > 0 {
+			parts = append(parts, fmt.Sprintf("disable %s (%s)", strings.Join(disable, ", "), scope))
+		}
+	}
+	m.confirm(strings.Join(parts, "; ")+"?", (*Model).apply)
+}
+
+func (m *Model) apply() tea.Cmd {
+	var notes []string
+	var failed error
+	for _, project := range []bool{false, true} {
+		scope := m.app.Global()
+		if project {
+			var err error
+			if scope, err = m.app.ProjectScope(); err != nil {
+				failed = err
+				continue
+			}
+		}
+		enable, disable := m.changes(project)
+		for i, names := range [][]string{enable, disable} {
+			if len(names) == 0 {
+				continue
+			}
+			report, err := m.app.Toggle(scope, i == 0, names...)
+			if summary := syncSummary(report); summary != "" {
+				notes = append(notes, summary)
+			}
+			if err != nil {
+				failed = err
+			}
+		}
+		clear(m.marks[project])
+	}
+	m.status = strings.Join(notes, "; ")
+	if m.status == "" {
+		m.status = "applied"
+	}
+	m.fail(failed)
 	m.fail(m.reload())
+	return nil
 }
 
 func (m *Model) switchScope() {
@@ -363,214 +410,24 @@ func (m *Model) switchScope() {
 		return
 	}
 	m.scope = scope
-	if m.view.Project == "" {
-		m.status = "no " + paths.ManifestName + " here yet; the first change creates it"
-	}
-}
-
-func (m *Model) ask(kind mode, label, initial string, onSubmit func(*Model, string) tea.Cmd) {
-	m.mode, m.label, m.onSubmit = kind, label, onSubmit
-	m.input.SetValue(initial)
-	m.input.CursorEnd()
-	m.input.Focus()
 }
 
 func (m *Model) updateInput(msg tea.KeyMsg) tea.Cmd {
 	switch msg.String() {
 	case "esc", "ctrl+c":
-		if m.mode == modeFilter {
-			m.filter = ""
-			m.rebuild()
-		}
+		m.filter = ""
+		m.rebuild()
 		m.mode = modeList
 		return nil
 	case "enter":
-		value, submit := strings.TrimSpace(m.input.Value()), m.onSubmit
 		m.mode = modeList
-		if submit != nil {
-			return submit(m, value)
-		}
 		return nil
 	}
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
-	if m.mode == modeFilter {
-		m.filter = m.input.Value()
-		m.rebuild()
-	}
+	m.filter = m.input.Value()
+	m.rebuild()
 	return cmd
-}
-
-func (m *Model) confirm(question string, onYes func(*Model) tea.Cmd) {
-	m.mode, m.label, m.onYes = modeConfirm, question, onYes
-}
-
-func (m *Model) updateConfirm(msg tea.KeyMsg) tea.Cmd {
-	m.mode = modeList
-	if msg.String() == "y" {
-		return m.onYes(m)
-	}
-	m.status = "cancelled"
-	return nil
-}
-
-func (m *Model) askRemove() {
-	r, ok := m.current()
-	if !ok || (r.skill == "" && r.mcp == "" && r.pack == app.NoPack) {
-		return
-	}
-	target, question := r.member(), fmt.Sprintf("remove %s from the catalog?", r.member())
-	if r.skill == "" && r.mcp == "" {
-		pack := m.pack(r.pack)
-		question = fmt.Sprintf("remove pack %s with its %d skills and %d servers from the catalog?", r.pack, len(pack.Skills), len(pack.MCPs))
-	}
-	m.confirm(question+" (y/n)", func(m *Model) tea.Cmd {
-		_, err := m.app.Remove(target)
-		m.status = "removed " + target
-		m.fail(err)
-		m.fail(m.reload())
-		return nil
-	})
-}
-
-// askPack toggles the selected skill's membership in a pack, creating the
-// pack when needed.
-func (m *Model) askPack() {
-	r, ok := m.current()
-	if !ok || (r.skill == "" && r.mcp == "") {
-		m.status = "select a skill or a server first"
-		return
-	}
-	member := r.member()
-	m.ask(modeInput, "pack to add "+member+" to, or to take it out of", "", func(m *Model, name string) tea.Cmd {
-		name = strings.TrimPrefix(name, "@")
-		if name == "" {
-			return nil
-		}
-		pack, exists := m.app.Catalog.Packs[name]
-		if !exists {
-			m.ask(modeInput, "description of new pack "+name, "", func(m *Model, description string) tea.Cmd {
-				m.editPack(name, true, func(local *catalog.Catalog) error {
-					return local.CreatePack(name, description, []string{member})
-				})
-				return nil
-			})
-			return nil
-		}
-		inPack := slices.Contains(m.app.Catalog.PackSkills(name), r.skill) || slices.Contains(pack.MCPs, r.mcp)
-		m.editPack(name, false, func(local *catalog.Catalog) error {
-			if inPack {
-				return local.PackRemove(name, []string{member})
-			}
-			return local.PackAdd(name, []string{member})
-		})
-		return nil
-	})
-}
-
-func (m *Model) askDescribe() {
-	r, ok := m.current()
-	if !ok || r.pack == app.NoPack {
-		return
-	}
-	m.ask(modeInput, "description of pack "+r.pack, m.pack(r.pack).Description, func(m *Model, value string) tea.Cmd {
-		if value == "" {
-			m.status = "a pack needs a description"
-			return nil
-		}
-		m.editPack(r.pack, false, func(local *catalog.Catalog) error {
-			local.Packs[r.pack].Description = value
-			return nil
-		})
-		return nil
-	})
-}
-
-func (m *Model) editPack(name string, create bool, edit func(local *catalog.Catalog) error) {
-	m.fail(m.app.EditPack(name, create, edit))
-	m.fail(m.reload())
-}
-
-// askRef changes what the selected skill's source tracks.
-func (m *Model) askRef() {
-	r, ok := m.current()
-	if !ok || r.skill == "" {
-		m.status = "select a skill first"
-		return
-	}
-	skill := m.view.Skills[r.skill]
-	label := "branch, tag or full commit for " + skill.Source + " (empty for the default branch)"
-	m.ask(modeInput, label, skill.Ref, func(m *Model, ref string) tea.Cmd {
-		if ref == skill.Ref {
-			return nil
-		}
-		m.busy, m.status = true, "fetching "+skill.Source+"…"
-		return func() tea.Msg { return refMsg{source: skill.Source, err: m.app.SetRef(skill.Source, ref)} }
-	})
-}
-
-func (m *Model) updatePick(msg tea.KeyMsg) tea.Cmd {
-	p := &m.pick
-	switch msg.String() {
-	case "esc", "ctrl+c":
-		m.mode, m.status = modeList, "cancelled"
-		m.app.DropUnusedClone(p.source)
-	case "up", "k":
-		p.cursor = max(0, p.cursor-1)
-	case "down", "j":
-		p.cursor = min(len(p.names)-1, p.cursor+1)
-	case " ":
-		if len(p.names) > 0 {
-			p.picked[p.names[p.cursor]] = !p.picked[p.names[p.cursor]]
-		}
-	case "a":
-		all := len(p.picked) < len(p.names)
-		p.picked = map[string]bool{}
-		for _, name := range p.names {
-			if all {
-				p.picked[name] = true
-			}
-		}
-	case "enter":
-		var skills []string
-		for _, name := range p.names {
-			if p.picked[name] {
-				skills = append(skills, name)
-			}
-		}
-		if len(skills) == 0 {
-			m.status = "pick at least one skill (space), or esc to cancel"
-			return nil
-		}
-		m.askAddPack(skills)
-	}
-	return nil
-}
-
-func (m *Model) askAddPack(skills []string) {
-	req := app.AddRequest{Source: m.pick.source, URL: m.pick.url, Skills: skills, All: len(skills) == len(m.pick.names)}
-	add := func(m *Model) {
-		if err := m.app.Add(req); err != nil {
-			m.app.DropUnusedClone(req.Source)
-			m.fail(err)
-			return
-		}
-		m.status = fmt.Sprintf("added %d skills from %s (disabled)", len(skills), req.Source)
-		m.fail(m.reload())
-	}
-	m.ask(modeInput, "pack for these skills (empty for none)", importer.PackName(req.Source), func(m *Model, name string) tea.Cmd {
-		req.Pack = strings.TrimPrefix(name, "@")
-		if _, exists := m.app.Local.Packs[req.Pack]; req.Pack == "" || exists {
-			add(m)
-			return nil
-		}
-		m.ask(modeInput, "description of new pack "+req.Pack, "", func(m *Model, description string) tea.Cmd {
-			req.PackDescription = description
-			add(m)
-			return nil
-		})
-		return nil
-	})
 }
 
 func syncSummary(report app.SyncReport) string {
@@ -628,12 +485,12 @@ var (
 func (m *Model) listHeight() int { return max(3, m.height-4) }
 
 func (m *Model) View() string {
-	if m.mode == modePick {
-		return m.viewPick()
-	}
 	scope := strings.Replace(m.scope.String(), m.app.Paths.Home, "~", 1)
 	if m.filter != "" && m.mode != modeFilter {
 		scope += "  filter: " + m.filter
+	}
+	if m.marked() > 0 {
+		scope += fmt.Sprintf("  %d marked", m.marked())
 	}
 	header := styleTitle.Render(truncate("skillet  scope: "+scope, m.width-16)) + styleDim.Render("  (tab switches)")
 
@@ -656,7 +513,7 @@ func (m *Model) View() string {
 		lines = append(lines, line)
 	}
 	if len(m.rows) == 0 {
-		lines = append(lines, styleDim.Render("the catalog is empty: press a to add a source, or run `skillet import`"))
+		lines = append(lines, styleDim.Render("the catalog is empty: add sources to config.toml, or run `skillet import`"))
 	}
 	for len(lines) < height {
 		lines = append(lines, "")
@@ -666,12 +523,12 @@ func (m *Model) View() string {
 
 	var footer string
 	switch m.mode {
-	case modeFilter, modeInput:
-		footer = m.label + ": " + m.input.View()
+	case modeFilter:
+		footer = "filter: " + m.input.View()
 	case modeConfirm:
-		footer = styleWarn.Render(m.label)
+		footer = styleWarn.Render(truncate(m.question, m.width-6) + " (y/n)")
 	default:
-		footer = styleDim.Render(truncate("space toggle · / filter · a add source · d remove · p pack membership · e pack description · r ref · u update · ←/→ fold · q quit", m.width))
+		footer = styleDim.Render(truncate("space mark · a apply the marks · esc drop them · tab scope · / filter · u update · ←/→ fold · q quit", m.width))
 	}
 	status := styleWarn.Render(truncate(m.status, m.width))
 	return strings.Join([]string{header, lipgloss.JoinHorizontal(lipgloss.Top, left, right), status, footer}, "\n")
@@ -689,7 +546,7 @@ func (m *Model) rowText(r row) string {
 		if on == total && on > 0 {
 			box = "[x]"
 		} else if on > 0 {
-			box = "[-]"
+			box = "[~]"
 		}
 		name := "@" + r.pack
 		if r.pack == app.NoPack {
@@ -697,14 +554,18 @@ func (m *Model) rowText(r row) string {
 		} else if strings.TrimSpace(pack.Description) == "" {
 			name += " !"
 		}
-		return fmt.Sprintf("%s %s %s  %d/%d enabled", fold, box, name, on, total)
+		state := "enabled"
+		if slices.ContainsFunc(m.packMembers(pack), func(member string) bool {
+			_, marked := m.marks[m.scope.Project][member]
+			return marked
+		}) {
+			state = "once applied"
+		}
+		return fmt.Sprintf("%s %s %s  %d/%d %s", fold, box, name, on, total, state)
 	}
 	if r.mcp != "" {
 		server := m.view.MCPs[r.mcp]
-		box := "[ ]"
-		if server.Global {
-			box = "[x]"
-		}
+		box := m.box(r.member())
 		note := server.Target
 		if len(server.MissingSecrets) > 0 {
 			note = "? needs secret " + strings.Join(server.MissingSecrets, ", ")
@@ -712,11 +573,8 @@ func (m *Model) rowText(r row) string {
 		return fmt.Sprintf("    %s mcp:%s — %s", box, r.mcp, note)
 	}
 	skill := m.view.Skills[r.skill]
-	box := "[ ]"
-	switch {
-	case m.enabled(r.skill):
-		box = "[x]"
-	case m.scope.Project && skill.Global:
+	box := m.box(r.skill)
+	if box == "[ ]" && m.scope.Project && skill.Global {
 		box = "[g]"
 	}
 	note := skill.Description
@@ -726,6 +584,21 @@ func (m *Model) rowText(r row) string {
 		note = "! no description"
 	}
 	return fmt.Sprintf("    %s %s — %s", box, r.skill, note)
+}
+
+// box shows the state of a member: enabled, disabled, or marked to become
+// enabled (+) or disabled (-).
+func (m *Model) box(member string) string {
+	enable, marked := m.marks[m.scope.Project][member]
+	switch {
+	case marked && enable:
+		return "[+]"
+	case marked:
+		return "[-]"
+	case m.enabled(member):
+		return "[x]"
+	}
+	return "[ ]"
 }
 
 func (m *Model) detail() string {
@@ -746,7 +619,7 @@ func (m *Model) detail() string {
 		}
 		info := "packs:  " + packs + "\nglobal: " + onOff(server.Global) + "\nServers are global; `skillet run` adds them for one command."
 		if server.From != "" {
-			info = "from:   gist " + server.From + "\n" + info
+			info = "from:   " + app.OriginName(server.From) + "\n" + info
 		}
 		return strings.Join(lines, "\n") + styleDim.Render(info)
 	}
@@ -758,10 +631,10 @@ func (m *Model) detail() string {
 		}
 		description := pack.Description
 		if strings.TrimSpace(description) == "" {
-			description = styleWarn.Render("no description — press e to write one")
+			description = styleWarn.Render("no description")
 		}
 		if pack.From != "" {
-			description += "\n\n" + styleDim.Render("from gist "+pack.From)
+			description += "\n\n" + styleDim.Render("from "+app.OriginName(pack.From))
 		}
 		members := slices.Clone(pack.Skills)
 		for _, server := range pack.MCPs {
@@ -773,7 +646,7 @@ func (m *Model) detail() string {
 	description := skill.Description
 	switch {
 	case skill.Missing:
-		description = styleWarn.Render("not found in the clone of " + skill.Source + " — run update, or remove it")
+		description = styleWarn.Render("not found in the clone of " + skill.Source + " — run update")
 	case description == "":
 		description = styleWarn.Render("the skill's SKILL.md has no description")
 	}
@@ -787,7 +660,7 @@ func (m *Model) detail() string {
 	}
 	from := ""
 	if skill.From != "" {
-		from = "\nfrom:   gist " + skill.From
+		from = "\nfrom:   " + app.OriginName(skill.From)
 	}
 	return styleTitle.Render(skill.Name) + "\n\n" + description + "\n\n" +
 		styleDim.Render("source: "+m.source(skill.Source)+from+"\npacks:  "+packs+"\n"+strings.Join(state, " · "))
@@ -809,33 +682,6 @@ func (m *Model) source(name string) string {
 		return fmt.Sprintf("%s @ %s (%s)", name, ref, commit)
 	}
 	return name
-}
-
-func (m *Model) viewPick() string {
-	p := m.pick
-	lines := []string{styleTitle.Render("skills in "+p.source) + styleDim.Render("  space pick · a all/none · enter continue · esc cancel"), ""}
-	height := max(3, m.height-4)
-	start := max(0, min(p.cursor-height/2, len(p.names)-height))
-	for i := start; i < min(len(p.names), start+height); i++ {
-		name := p.names[i]
-		box := "[ ]"
-		if p.picked[name] {
-			box = "[x]"
-		}
-		line := fmt.Sprintf("%s %s — %s", box, name, p.found[name].Description)
-		if m.app.Catalog.HasSkill(name) {
-			line += " (in catalog)"
-		}
-		line = truncate(line, m.width)
-		if i == p.cursor {
-			line = styleCursor.Render(line)
-		}
-		lines = append(lines, line)
-	}
-	if len(p.names) == 0 {
-		lines = append(lines, "no SKILL.md found in this source")
-	}
-	return strings.Join(append(lines, "", styleWarn.Render(m.status)), "\n")
 }
 
 func onOff(on bool) string {

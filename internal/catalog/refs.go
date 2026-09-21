@@ -50,10 +50,3 @@ func removeRef(list []string, name string) []string {
 	}
 	return out
 }
-
-func containsRef(list []string, name string) bool {
-	return slices.ContainsFunc(list, func(entry string) bool {
-		entryName, _ := SplitRef(entry)
-		return entryName == name && !strings.HasPrefix(entry, MCPPrefix)
-	})
-}

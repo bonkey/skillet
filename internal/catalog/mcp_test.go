@@ -99,15 +99,6 @@ func TestPacksHoldServers(t *testing.T) {
 	if err := c.PackAdd("mixed", []string{"mcp:ghost"}); err == nil {
 		t.Error("an unknown server should be rejected")
 	}
-	if err := c.PackRemove("mixed", []string{"mcp:tavily", "a"}); err != nil || len(c.Packs["mixed"].MCPs) != 0 {
-		t.Fatalf("after remove: %+v %v", c.Packs["mixed"], err)
-	}
-
-	c.Enabled = Set{MCPs: []string{"simctl"}, Except: []string{"mcp:simctl"}}
-	c.RemoveMCP("simctl")
-	if _, ok := c.MCPs["simctl"]; ok || len(c.Enabled.MCPs)+len(c.Enabled.Except) != 0 || !reflect.DeepEqual(c.Packs["acme"].MCPs, []string{"sosumi"}) {
-		t.Errorf("RemoveMCP must clean everything: %+v %+v", c.Enabled, c.Packs["acme"])
-	}
 }
 
 func TestMergeIncludesServers(t *testing.T) {

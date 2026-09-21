@@ -5,8 +5,17 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/bonkey/skillet/internal/paths"
 	"github.com/bonkey/skillet/internal/secrets"
 )
+
+// OriginName describes the `from` of a view entry.
+func OriginName(from string) string {
+	if from == paths.ManifestName {
+		return "project"
+	}
+	return "gist " + from
+}
 
 // NoPack groups the skills that belong to no pack.
 const NoPack = ""
@@ -19,7 +28,7 @@ type SkillView struct {
 	Global      bool     `json:"global"`
 	Project     bool     `json:"project"`
 	Missing     bool     `json:"missing"`        // not found in the source's clone
-	From        string   `json:"from,omitempty"` // the included gist it comes from
+	From        string   `json:"from,omitempty"` // the included gist or the manifest it comes from
 	Ref         string   `json:"ref,omitempty"`  // what the source tracks; empty for the default branch
 	Commit      string   `json:"commit,omitempty"`
 }
@@ -32,7 +41,7 @@ type MCPView struct {
 	Packs          []string `json:"packs"`
 	Global         bool     `json:"global"`
 	MissingSecrets []string `json:"missing_secrets,omitempty"`
-	From           string   `json:"from,omitempty"` // the included gist it comes from
+	From           string   `json:"from,omitempty"` // the included gist or the manifest it comes from
 }
 
 type PackView struct {
@@ -40,11 +49,11 @@ type PackView struct {
 	Description string   `json:"description"`
 	Skills      []string `json:"skills"`
 	MCPs        []string `json:"mcps,omitempty"`
-	From        string   `json:"from,omitempty"` // the included gist it comes from
+	From        string   `json:"from,omitempty"` // the included gist or the manifest it comes from
 }
 
 type View struct {
-	Project string               `json:"project,omitempty"` // project root, when inside one
+	Project string               `json:"project,omitempty"` // project root; absent in the home directory
 	Packs   []PackView           `json:"packs"`
 	Skills  map[string]SkillView `json:"skills"`
 	MCPs    map[string]MCPView   `json:"mcps,omitempty"`
@@ -54,14 +63,15 @@ type View struct {
 // of the surrounding project, if there is one.
 func (a *App) View() (View, error) {
 	view := View{Skills: map[string]SkillView{}, MCPs: map[string]MCPView{}}
-	global, err := a.Enabled(a.Global())
+	globalSet, err := a.Set(a.Global())
 	if err != nil {
 		return view, err
 	}
+	global := a.Catalog.Resolve(globalSet)
 	var project []string
-	if root, ok := a.Paths.ProjectRoot(); ok {
-		view.Project = root
-		if project, err = a.Enabled(Scope{Project: true, Root: root}); err != nil {
+	if scope, err := a.ProjectScope(); err == nil {
+		view.Project = scope.Root
+		if project, err = a.Enabled(scope); err != nil {
 			return view, err
 		}
 	}
@@ -86,7 +96,7 @@ func (a *App) View() (View, error) {
 	if err != nil {
 		return view, err
 	}
-	enabledMCPs := a.Catalog.ResolveMCPs(a.Catalog.Enabled)
+	enabledMCPs := a.Catalog.ResolveMCPs(globalSet)
 	var looseMCPs []string
 	for _, name := range a.Catalog.MCPNames() {
 		def := a.Catalog.MCPs[name]

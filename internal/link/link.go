@@ -1,15 +1,16 @@
 // Package link makes the symlinks in skill directories match a desired set
 // of skills.
 //
-// Links have two levels, like the `skills` CLI lays them out: the canonical
-// directory <base>/.agents/skills links into the clones, and every other
-// agent directory links to the canonical entry.
+// Every agent directory links straight into the clones with absolute paths.
+// The links are the enabled state: a skill is enabled where a link to it
+// exists.
 package link
 
 import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -18,6 +19,7 @@ import (
 // directory (Global) and to a project root (Project).
 type Agent struct{ Global, Project string }
 
+// canonical is the directory that several agents read.
 const canonical = ".agents/skills"
 
 var Agents = map[string]Agent{
@@ -27,23 +29,20 @@ var Agents = map[string]Agent{
 	"gemini-cli":     {".gemini/skills", canonical},
 	"github-copilot": {".copilot/skills", canonical},
 	"opencode":       {".config/opencode/skills", canonical},
-	// pi reads ~/.agents/skills and ./.agents/skills itself, and warns about
-	// a skill it finds twice, so it gets no directory of its own.
+	// pi reads ~/.agents/skills and ./.agents/skills, and warns about a skill
+	// it finds twice.
 	"pi": {canonical, canonical},
 	// crush and zed take MCP servers only; they have no skills directory.
 	"crush": {},
 	"zed":   {},
 }
 
-// Canonical is the directory below base whose links point into the clones.
-func Canonical(base string) string { return filepath.Join(base, filepath.FromSlash(canonical)) }
-
-// Dirs lists the agent directories below base that link to the canonical
-// directory. base is the home directory, or a project root when project is
-// set. Agents that read the canonical directory itself add nothing.
+// Dirs lists the skill directories of the agents below base. base is the
+// home directory, or a project root when project is set. Agents that share a
+// directory add it once.
 func Dirs(agents []string, base string, project bool) ([]string, error) {
 	var dirs []string
-	seen := map[string]bool{Canonical(base): true}
+	seen := map[string]bool{}
 	for _, name := range agents {
 		agent, ok := Agents[name]
 		if !ok {
@@ -92,28 +91,43 @@ func (a Action) String() string {
 }
 
 type Options struct {
-	// ReposDir marks ownership: a canonical entry is managed when it is a
-	// symlink pointing into ReposDir.
+	// ReposDir marks ownership: a link is managed when it points into
+	// ReposDir, directly or through another link.
 	ReposDir string
-	// Replace allows deleting an unmanaged entry, in the canonical or an
-	// agent directory, that stands where the named skill goes.
+	// Keep names managed links that stay as they are although they are not
+	// desired.
+	Keep map[string]bool
+	// Replace allows deleting an unmanaged entry that stands where the named
+	// skill goes.
 	Replace func(name string) bool
 	DryRun  bool
 }
 
-// Sync reconciles the canonical directory with desired (skill name to
-// absolute skill folder) and the agent directories with the canonical one.
-// It returns what it did, or would do in a dry run.
-func Sync(canonicalDir string, agentDirs []string, desired map[string]string, opt Options) ([]Action, error) {
-	actions, linked, foreign, err := planCanonical(canonicalDir, desired, opt)
-	if err != nil {
-		return nil, err
+// Linked lists the names that have a managed link in any of dirs.
+func Linked(dirs []string, reposDir string) []string {
+	names := map[string]bool{}
+	for _, dir := range dirs {
+		entries, _ := os.ReadDir(dir)
+		for _, entry := range entries {
+			if owned(dir, entry.Name(), dirs, reposDir) {
+				names[entry.Name()] = true
+			}
+		}
 	}
-	for _, dir := range agentDirs {
-		if sameDir(dir, canonicalDir) {
+	return sortedKeys(names)
+}
+
+// Sync makes the managed links in dirs match desired (skill name to absolute
+// skill folder). It returns what it did, or would do in a dry run.
+func Sync(dirs []string, desired map[string]string, opt Options) ([]Action, error) {
+	var actions []Action
+	var done []string
+	for _, dir := range dirs {
+		if slices.ContainsFunc(done, func(other string) bool { return sameDir(dir, other) }) {
 			continue
 		}
-		planned, err := planAgentDir(dir, canonicalDir, linked, foreign, opt)
+		done = append(done, dir)
+		planned, err := plan(dir, dirs, desired, opt)
 		if err != nil {
 			return nil, err
 		}
@@ -124,6 +138,7 @@ func Sync(canonicalDir string, agentDirs []string, desired map[string]string, op
 	}
 	for _, a := range actions {
 		path := filepath.Join(a.Dir, a.Name)
+		var err error
 		switch a.Op {
 		case OpUnlink, OpRelink:
 			err = os.Remove(path)
@@ -145,24 +160,16 @@ func Sync(canonicalDir string, agentDirs []string, desired map[string]string, op
 	return actions, nil
 }
 
-// planCanonical also reports which names end up as managed links (linked)
-// and which unmanaged entries stay (foreign).
-func planCanonical(dir string, desired map[string]string, opt Options) (actions []Action, linked, foreign map[string]bool, err error) {
-	linked, foreign = map[string]bool{}, map[string]bool{}
+func plan(dir string, dirs []string, desired map[string]string, opt Options) ([]Action, error) {
+	var actions []Action
 	entries, err := os.ReadDir(dir)
 	if err != nil && !os.IsNotExist(err) {
-		return nil, nil, nil, err
+		return nil, err
 	}
 	for _, entry := range entries {
 		name := entry.Name()
-		target, isLink := readLink(dir, name)
-		switch _, wanted := desired[name]; {
-		case isLink && within(target, opt.ReposDir):
-			if !wanted {
-				actions = append(actions, Action{Op: OpUnlink, Dir: dir, Name: name})
-			}
-		case !wanted || opt.Replace == nil || !opt.Replace(name):
-			foreign[name] = true
+		if _, wanted := desired[name]; !wanted && !opt.Keep[name] && owned(dir, name, dirs, opt.ReposDir) {
+			actions = append(actions, Action{Op: OpUnlink, Dir: dir, Name: name})
 		}
 	}
 	for _, name := range sortedKeys(desired) {
@@ -173,60 +180,8 @@ func planCanonical(dir string, desired map[string]string, opt Options) (actions 
 		case os.IsNotExist(statErr):
 			action.Op = OpLink
 		case isLink && target == desired[name]:
-			linked[name] = true
 			continue
-		case isLink && within(target, opt.ReposDir):
-			action.Op = OpRelink
-		case foreign[name]:
-			action.Op = OpConflict
-		default:
-			action.Op = OpReplace
-		}
-		linked[name] = action.Op != OpConflict
-		actions = append(actions, action)
-	}
-	return actions, linked, foreign, nil
-}
-
-// planAgentDir manages the links of one agent directory. A link belongs to
-// skillet when it points into the clones, or at a canonical entry that
-// is managed or missing.
-func planAgentDir(dir, canonicalDir string, linked, foreign map[string]bool, opt Options) ([]Action, error) {
-	var actions []Action
-	entries, err := os.ReadDir(dir)
-	if err != nil && !os.IsNotExist(err) {
-		return nil, err
-	}
-	owned := func(target string) bool {
-		if within(target, opt.ReposDir) {
-			return true
-		}
-		return within(target, canonicalDir) && !foreign[filepath.Base(target)]
-	}
-	for _, entry := range entries {
-		target, isLink := readLink(dir, entry.Name())
-		if isLink && owned(target) && !linked[entry.Name()] {
-			actions = append(actions, Action{Op: OpUnlink, Dir: dir, Name: entry.Name()})
-		}
-	}
-	for _, name := range sortedKeys(linked) {
-		if !linked[name] {
-			continue
-		}
-		want := filepath.Join(canonicalDir, name)
-		rel, err := filepath.Rel(dir, want)
-		if err != nil {
-			rel = want
-		}
-		action := Action{Dir: dir, Name: name, Target: rel}
-		target, isLink := readLink(dir, name)
-		_, statErr := os.Lstat(filepath.Join(dir, name))
-		switch {
-		case os.IsNotExist(statErr):
-			action.Op = OpLink
-		case isLink && target == want:
-			continue
-		case isLink && owned(target):
+		case owned(dir, name, dirs, opt.ReposDir):
 			action.Op = OpRelink
 		case opt.Replace != nil && opt.Replace(name):
 			action.Op = OpReplace
@@ -238,8 +193,26 @@ func planAgentDir(dir, canonicalDir string, linked, foreign map[string]bool, opt
 	return actions, nil
 }
 
-// sameDir reports whether two paths lead to one directory, as when a project
-// symlinks .claude/skills to .agents/skills.
+// owned reports whether dir/name is a link that belongs to skillet: it
+// points into the clones, at another link that does, or at a missing entry
+// of one of dirs.
+func owned(dir, name string, dirs []string, reposDir string) bool {
+	target, isLink := readLink(dir, name)
+	if !isLink {
+		return false
+	}
+	if within(target, reposDir) {
+		return true
+	}
+	if next, isLink := readLink(filepath.Dir(target), filepath.Base(target)); isLink {
+		return within(next, reposDir)
+	}
+	_, err := os.Lstat(target)
+	return os.IsNotExist(err) && slices.Contains(dirs, filepath.Dir(target))
+}
+
+// sameDir reports whether two paths lead to one directory, as when
+// .claude/skills is a symlink to .agents/skills.
 func sameDir(a, b string) bool {
 	realA, errA := filepath.EvalSymlinks(a)
 	realB, errB := filepath.EvalSymlinks(b)

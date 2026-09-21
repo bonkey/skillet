@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 )
 
+// ManifestName is the catalog file of a project.
 const ManifestName = ".skillet.toml"
 
 type Paths struct {
@@ -60,21 +61,21 @@ func (p Paths) RepoDir(source string) string {
 	return filepath.Join(p.ReposDir(), filepath.FromSlash(source))
 }
 
-// ProjectRoot is the nearest ancestor of Cwd holding a manifest. Home and
-// everything above it never count as a project.
+// ProjectRoot is the nearest ancestor of Cwd below Home that holds a
+// manifest, or else a git repository, or else Cwd. Home itself is never a
+// project: its agent directories are the global scope.
 func (p Paths) ProjectRoot() (string, bool) {
-	dir := p.Cwd
-	for {
-		if dir == p.Home {
-			return "", false
+	for _, marker := range []string{ManifestName, ".git"} {
+		for dir := p.Cwd; dir != p.Home; {
+			if _, err := os.Stat(filepath.Join(dir, marker)); err == nil {
+				return dir, true
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
 		}
-		if _, err := os.Stat(filepath.Join(dir, ManifestName)); err == nil {
-			return dir, true
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", false
-		}
-		dir = parent
 	}
+	return p.Cwd, p.Cwd != p.Home
 }

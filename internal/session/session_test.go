@@ -9,7 +9,7 @@ import (
 	"github.com/bonkey/skillet/internal/catalog"
 )
 
-func TestLiveKeepsRunningSessionsAndReapsDeadOnes(t *testing.T) {
+func TestReadSplitsSessionsAndPruneReapsDeadOnes(t *testing.T) {
 	root := ProjectDir(t.TempDir())
 	dead := exec.Command("true")
 	if err := dead.Run(); err != nil {
@@ -19,13 +19,15 @@ func TestLiveKeepsRunningSessionsAndReapsDeadOnes(t *testing.T) {
 	if err := Write(root, os.Getpid(), mine); err != nil {
 		t.Fatal(err)
 	}
-	if err := Write(root, dead.Process.Pid, Session{Set: catalog.Set{Skills: []string{"stale"}}}); err != nil {
+	stale := Session{Set: catalog.Set{Skills: []string{"stale"}}, Added: []string{"stale"}}
+	if err := Write(root, dead.Process.Pid, stale); err != nil {
 		t.Fatal(err)
 	}
 
-	if got := Live(root); !reflect.DeepEqual(got, []Session{mine}) {
-		t.Fatalf("got %+v", got)
+	if live, gone := Read(root); !reflect.DeepEqual(live, []Session{mine}) || !reflect.DeepEqual(gone, []Session{stale}) {
+		t.Fatalf("got %+v and %+v", live, gone)
 	}
+	Prune(root)
 	if _, err := os.Stat(file(root, dead.Process.Pid)); !os.IsNotExist(err) {
 		t.Error("dead session file was not reaped")
 	}

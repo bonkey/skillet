@@ -2,6 +2,7 @@ package tui
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -24,6 +25,16 @@ func model(t *testing.T) *Model {
 		Cwd:    filepath.Join(root, "project"),
 	}
 	os.MkdirAll(p.Cwd, 0o755)
+	clone := p.RepoDir("acme/skills")
+	for _, name := range []string{"alpha", "beta", "loose"} {
+		os.MkdirAll(filepath.Join(clone, name), 0o755)
+		os.WriteFile(filepath.Join(clone, name, "SKILL.md"), []byte("---\nname: "+name+"\ndescription: The "+name+" skill\n---\n"), 0o644)
+	}
+	for _, args := range [][]string{{"init", "-q"}, {"add", "-A"}, {"-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "init"}} {
+		if out, err := exec.Command("git", append([]string{"-C", clone}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
 	c := catalog.New()
 	c.Sources["acme/skills"] = &catalog.Source{URL: "x", Skills: []string{"alpha", "beta", "loose"}}
 	c.MCPs["simctl"] = &catalog.MCP{Type: "local", Command: []string{"npx", "-y", "simctl-mcp"}}
@@ -72,41 +83,67 @@ func TestRowsGroupSkillsUnderPacks(t *testing.T) {
 	}
 }
 
+func enabled(t *testing.T, a *app.App) []string {
+	t.Helper()
+	got, err := a.Enabled(a.Global())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
 func TestToggleSkillAndPack(t *testing.T) {
 	m := model(t)
 	press(m, "down", " ") // alpha
-	if got := m.app.Catalog.Enabled; !reflect.DeepEqual(got.Skills, []string{"alpha@acme/skills"}) {
-		t.Fatalf("after toggling alpha: %+v", got)
+	if got := enabled(t, m.app); len(got) != 0 {
+		t.Fatalf("a mark changes nothing yet: %v", got)
 	}
-	if !strings.Contains(m.View(), "[-] @acme  1/3 enabled") {
+	if view := m.View(); !strings.Contains(view, "[+] alpha") || !strings.Contains(view, "[~] @acme  1/3 once applied") || !strings.Contains(view, "1 marked") {
+		t.Errorf("the mark should show:\n%s", view)
+	}
+	press(m, "a", "n")
+	if got := enabled(t, m.app); len(got) != 0 || m.marked() != 1 {
+		t.Fatalf("a declined confirmation keeps the marks and changes nothing: %v", got)
+	}
+	press(m, "a", "y")
+	if got := enabled(t, m.app); !reflect.DeepEqual(got, []string{"alpha"}) || m.marked() != 0 {
+		t.Fatalf("after applying alpha: %v", got)
+	}
+	if !strings.Contains(m.View(), "[~] @acme  1/3 enabled") {
 		t.Errorf("pack header should show a partial state:\n%s", m.View())
 	}
 
-	m.cursor = 0
-	press(m, " ") // whole pack on
-	if got := m.app.Catalog.Resolve(m.app.Catalog.Enabled); !reflect.DeepEqual(got, []string{"alpha", "beta"}) {
-		t.Fatalf("after enabling the pack: %v", got)
-	}
-	press(m, " ") // whole pack off
-	if got := m.app.Catalog.Resolve(m.app.Catalog.Enabled); len(got) != 0 {
-		t.Fatalf("after disabling the pack: %v", got)
+	press(m, " ", " ")
+	if m.marked() != 0 {
+		t.Errorf("marking a row twice takes the change back: %v", m.marks)
 	}
 
+	m.cursor = 0
+	press(m, " ", "a", "y") // whole pack on
+	if got := enabled(t, m.app); !reflect.DeepEqual(got, []string{"alpha", "beta"}) {
+		t.Fatalf("after enabling the pack: %v", got)
+	}
 	reopened, _ := app.Open(m.app.Paths)
-	if !reopened.Catalog.Enabled.Empty() {
-		t.Errorf("toggles must be saved: %+v", reopened.Catalog.Enabled)
+	if got := enabled(t, reopened); !reflect.DeepEqual(got, []string{"alpha", "beta"}) {
+		t.Errorf("the links hold the state: %v", got)
+	}
+	press(m, " ", "a", "y") // whole pack off
+	if got := enabled(t, m.app); len(got) != 0 {
+		t.Fatalf("after disabling the pack: %v", got)
 	}
 }
 
-func TestScopeSwitchWritesProjectManifest(t *testing.T) {
+func TestScopeSwitchTogglesInTheProject(t *testing.T) {
 	m := model(t)
-	press(m, "tab", "down", " ")
-	if !m.scope.Project || !m.app.Catalog.Enabled.Empty() {
-		t.Fatalf("scope %+v, global set %+v", m.scope, m.app.Catalog.Enabled)
+	press(m, "down", "down", " ", "tab", "k", " ", "a", "y") // beta globally, alpha in the project
+	if got := enabled(t, m.app); !m.scope.Project || !reflect.DeepEqual(got, []string{"beta"}) {
+		t.Fatalf("one confirmation applies the marks of both scopes: %+v %v", m.scope, got)
 	}
-	set, err := catalog.LoadSet(filepath.Join(m.app.Paths.Cwd, paths.ManifestName))
-	if err != nil || !reflect.DeepEqual(set.Skills, []string{"alpha@acme/skills"}) {
-		t.Fatalf("manifest: %+v %v", set, err)
+	if _, err := os.Readlink(filepath.Join(m.app.Paths.Cwd, ".claude", "skills", "alpha")); err != nil {
+		t.Fatalf("project link: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(m.app.Paths.Cwd, paths.ManifestName)); !os.IsNotExist(err) {
+		t.Error("toggling must not write a manifest")
 	}
 	press(m, "tab")
 	if m.scope.Project {
@@ -130,17 +167,6 @@ func TestFilterAndFold(t *testing.T) {
 	}
 }
 
-func TestEditPackDescription(t *testing.T) {
-	m := model(t)
-	press(m, "e")
-	m.input.SetValue("Better words")
-	press(m, "enter")
-	reopened, _ := app.Open(m.app.Paths)
-	if got := reopened.Catalog.Packs["acme"].Description; got != "Better words" {
-		t.Errorf("description: %q", got)
-	}
-}
-
 func TestViewFitsTheTerminal(t *testing.T) {
 	m := model(t)
 	m.view.Skills["alpha"] = app.SkillView{Name: "alpha", Description: strings.Repeat("long description ", 200)}
@@ -158,9 +184,9 @@ func TestViewFitsTheTerminal(t *testing.T) {
 func TestToggleServer(t *testing.T) {
 	m := model(t)
 	m.cursor = 3 // mcp:simctl
-	press(m, " ")
-	if got := m.app.Local.Enabled.MCPs; !reflect.DeepEqual(got, []string{"simctl"}) {
-		t.Fatalf("after toggling the server: %+v", m.app.Local.Enabled)
+	press(m, " ", "a", "y")
+	if !m.view.MCPs["simctl"].Global {
+		t.Fatalf("after toggling the server: %+v", m.view.MCPs["simctl"])
 	}
 	if text := string(must(os.ReadFile(filepath.Join(m.app.Paths.Home, ".claude.json")))); !strings.Contains(text, "simctl-mcp") {
 		t.Errorf("the server is written into the agent config:\n%s", text)
@@ -170,7 +196,7 @@ func TestToggleServer(t *testing.T) {
 	}
 
 	press(m, "tab", " ")
-	if !strings.Contains(m.status, "global") || len(m.app.Local.Enabled.MCPs) != 1 {
+	if !strings.Contains(m.status, "global") || !m.view.MCPs["simctl"].Global {
 		t.Errorf("a server cannot be toggled in the project scope: %q", m.status)
 	}
 }

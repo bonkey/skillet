@@ -3,7 +3,7 @@
 #
 #   mkdir -p ~/.config/skillet
 #   cp examples/config.toml ~/.config/skillet/config.toml
-#   skillet update        # clones the sources and links what is enabled
+#   skillet sync          # clones the sources and links what is enabled
 agents = ["claude-code"]
 
 [sources."bonkey/skillet"]
