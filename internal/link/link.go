@@ -104,6 +104,9 @@ func Sync(canonicalDir string, agentDirs []string, desired map[string]string, op
 		return nil, err
 	}
 	for _, dir := range agentDirs {
+		if sameDir(dir, canonicalDir) {
+			continue
+		}
 		planned, err := planAgentDir(dir, canonicalDir, linked, foreign, opt)
 		if err != nil {
 			return nil, err
@@ -227,6 +230,14 @@ func planAgentDir(dir, canonicalDir string, linked, foreign map[string]bool, opt
 		actions = append(actions, action)
 	}
 	return actions, nil
+}
+
+// sameDir reports whether two paths lead to one directory, as when a project
+// symlinks .claude/skills to .agents/skills.
+func sameDir(a, b string) bool {
+	realA, errA := filepath.EvalSymlinks(a)
+	realB, errB := filepath.EvalSymlinks(b)
+	return errA == nil && errB == nil && realA == realB
 }
 
 // readLink returns the absolute target of dir/name when it is a symlink.

@@ -52,6 +52,7 @@ skillet enable -p @craft                 # in this project; writes .skillet.yaml
 skillet run @craft -- claude             # only while the command runs
 
 skillet list                             # packs and skills with descriptions and state
+skillet list 'swift|ios' --enabled       # search names and descriptions; terms may be regexps
 skillet update                           # fetch all sources, report changed skills
 skillet ref wondelai/skills v2.1         # track a branch, tag, or full commit hash
 skillet gist push                        # store the catalog in a gist
@@ -146,7 +147,9 @@ warning. `skillet gist list` shows the tree.
 - `run` tracks sessions in `.claude/skills/.skillet-sessions/`. Parallel sessions keep each
   other's links, and the next `sync` or `run` cleans up after a crashed one.
 - The links are machine-local: add `.claude/skills/` and `.agents/skills/` to the project's ignore
-  file.
+  file. `.skillet.yaml` can be committed.
+- An agent directory that is a symlink to `.agents/skills` is left alone: the skills already show
+  up through it.
 
 ## Development
 

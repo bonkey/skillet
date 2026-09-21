@@ -376,9 +376,17 @@ func listCmd() *cobra.Command {
 	var enabledOnly, asJSON bool
 	var pack string
 	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List packs and skills with their descriptions and enabled state",
-		Args:  cobra.NoArgs,
+		Use:   "list [term...]",
+		Short: "List or search packs and skills with their descriptions and enabled state",
+		Long: `List or search packs and skills with their descriptions and enabled state.
+
+With terms, only skills that match every term are listed. A term is matched,
+ignoring case, against the skill's name and description and against the name
+and description of its pack. A term may be a regular expression:
+
+  skillet list pull request       # both words
+  skillet list 'swift|ios|xcode'  # any of them
+  skillet list --enabled review   # combined with the other filters`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := open()
 			if err != nil {
@@ -388,7 +396,7 @@ func listCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			view = filter(view, pack, enabledOnly)
+			view = view.Filter(pack, enabledOnly, args)
 			if asJSON {
 				out := json.NewEncoder(os.Stdout)
 				out.SetIndent("", "  ")
@@ -404,33 +412,14 @@ func listCmd() *cobra.Command {
 	return cmd
 }
 
-func filter(view app.View, pack string, enabledOnly bool) app.View {
-	out := app.View{Project: view.Project, Skills: map[string]app.SkillView{}}
-	for _, p := range view.Packs {
-		if pack != "" && p.Name != pack {
-			continue
-		}
-		var skills []string
-		for _, name := range p.Skills {
-			skill := view.Skills[name]
-			if enabledOnly && !skill.Global && !skill.Project {
-				continue
-			}
-			skills = append(skills, name)
-			out.Skills[name] = skill
-		}
-		if len(skills) > 0 || !enabledOnly {
-			p.Skills = skills
-			out.Packs = append(out.Packs, p)
-		}
-	}
-	return out
-}
-
 func printView(view app.View) {
 	width := 100
 	if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 40 {
 		width = w
+	}
+	if len(view.Packs) == 0 {
+		fmt.Println("no skills match")
+		return
 	}
 	fmt.Println("G = enabled globally, P = enabled in this project, ! = no description, ? = missing from its source")
 	for _, pack := range view.Packs {

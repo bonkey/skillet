@@ -150,6 +150,59 @@ func TestForceReplacesConflictingEntries(t *testing.T) {
 	}
 }
 
+func TestViewFilter(t *testing.T) {
+	view := View{
+		Packs: []PackView{
+			{Name: "apple", Description: "Building for iOS", Skills: []string{"docc", "pr"}},
+			{Name: "git", Description: "Version control", Skills: []string{"pr", "rebase"}},
+		},
+		Skills: map[string]SkillView{
+			"docc":   {Name: "docc", Description: "Swift DocC documentation markup", Global: true},
+			"pr":     {Name: "pr", Description: "Create and update pull requests"},
+			"rebase": {Name: "rebase", Description: "Rebase a branch and resolve conflicts", Project: true},
+		},
+	}
+	names := func(v View) []string {
+		var out []string
+		for _, pack := range v.Packs {
+			for _, skill := range pack.Skills {
+				out = append(out, pack.Name+"/"+skill)
+			}
+		}
+		return out
+	}
+	tests := []struct {
+		name    string
+		pack    string
+		enabled bool
+		terms   []string
+		want    []string
+	}{
+		{"no filter", "", false, nil, []string{"apple/docc", "apple/pr", "git/pr", "git/rebase"}},
+		{"case-insensitive word in a description", "", false, []string{"SWIFT"}, []string{"apple/docc"}},
+		{"every term must match", "", false, []string{"pull", "update"}, []string{"apple/pr", "git/pr"}},
+		{"alternatives in one term", "", false, []string{"docc|rebase"}, []string{"apple/docc", "git/rebase"}},
+		{"a pack's name and description count for its skills", "", false, []string{"ios"}, []string{"apple/docc", "apple/pr"}},
+		{"combined with enabled and pack", "git", true, []string{"re"}, []string{"git/rebase"}},
+		{"a term that is no regular expression is taken literally", "", false, []string{"(pull"}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := view.Filter(tt.pack, tt.enabled, tt.terms)
+			if !reflect.DeepEqual(names(got), tt.want) {
+				t.Errorf("got %v, want %v", names(got), tt.want)
+			}
+			for _, pack := range got.Packs {
+				for _, skill := range pack.Skills {
+					if _, ok := got.Skills[skill]; !ok {
+						t.Errorf("%s is listed in a pack but missing from the skills", skill)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestProjectScope(t *testing.T) {
 	e := setup(t)
 	e.add(t, false)

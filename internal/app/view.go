@@ -1,6 +1,10 @@
 package app
 
-import "slices"
+import (
+	"regexp"
+	"slices"
+	"strings"
+)
 
 // NoPack groups the skills that belong to no pack.
 const NoPack = ""
@@ -92,6 +96,47 @@ func (a *App) Sources() []SourceView {
 			view.Commit = indexed.Head
 		}
 		out = append(out, view)
+	}
+	return out
+}
+
+// Filter narrows a view to one pack, to enabled skills, and to skills that
+// match every term. A term is a case-insensitive regular expression, or
+// plain text when it does not compile. It is matched against the skill's
+// name and description and the name and description of its pack. Packs left
+// without skills are dropped once any filter applies.
+func (v View) Filter(pack string, enabledOnly bool, terms []string) View {
+	var patterns []*regexp.Regexp
+	for _, term := range terms {
+		re, err := regexp.Compile("(?i)" + term)
+		if err != nil {
+			re = regexp.MustCompile("(?i)" + regexp.QuoteMeta(term))
+		}
+		patterns = append(patterns, re)
+	}
+	filtering := enabledOnly || len(patterns) > 0
+	out := View{Project: v.Project, Skills: map[string]SkillView{}}
+	for _, p := range v.Packs {
+		if pack != "" && p.Name != pack {
+			continue
+		}
+		var skills []string
+		for _, name := range p.Skills {
+			skill := v.Skills[name]
+			if enabledOnly && !skill.Global && !skill.Project {
+				continue
+			}
+			text := strings.Join([]string{skill.Name, skill.Description, p.Name, p.Description}, " ")
+			if slices.ContainsFunc(patterns, func(re *regexp.Regexp) bool { return !re.MatchString(text) }) {
+				continue
+			}
+			skills = append(skills, name)
+			out.Skills[name] = skill
+		}
+		if len(skills) > 0 || !filtering {
+			p.Skills = skills
+			out.Packs = append(out.Packs, p)
+		}
 	}
 	return out
 }

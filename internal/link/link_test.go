@@ -202,6 +202,28 @@ func TestSyncReplacesConflictsInAgentDirsWhenAllowed(t *testing.T) {
 	}
 }
 
+func TestSyncSkipsAnAgentDirThatIsTheCanonicalDir(t *testing.T) {
+	f := setup(t)
+	if err := os.Remove(f.claude); err != nil {
+		t.Fatal(err)
+	}
+	symlink(t, "../.agents/skills", f.claude) // ~/.claude/skills -> ~/.agents/skills
+
+	want := map[string]string{".agents/alpha": OpLink, ".agents/beta": OpLink, ".agents/gamma": OpLink}
+	if got := f.sync(t, Options{}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("first sync: %v", got)
+	}
+	if got := f.sync(t, Options{}); len(got) != 0 {
+		t.Fatalf("second sync must not touch the shared directory: %v", got)
+	}
+	if got := target(t, filepath.Join(f.canonical, "alpha")); got != f.desired["alpha"] {
+		t.Errorf("alpha -> %s", got)
+	}
+	if _, err := os.Stat(filepath.Join(f.claude, "alpha")); err != nil {
+		t.Errorf("the skill must be reachable through the symlinked directory: %v", err)
+	}
+}
+
 func TestSyncMigratesDirectAgentLinks(t *testing.T) {
 	f := setup(t)
 	symlink(t, f.desired["alpha"], filepath.Join(f.claude, "alpha")) // straight into the clone

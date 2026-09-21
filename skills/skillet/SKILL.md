@@ -16,13 +16,13 @@ time. A skill that is not loaded in this session is therefore usually one comman
 skill would help with the task, or the user asks for one, search the catalog before anything else:
 
 ```sh
-skillet list --json | jq -r '.skills[]
-  | select((.name + " " + .description) | test("swift|ios|xcode"; "i"))
-  | [.name, (if .global or .project then "enabled" else "disabled" end), .description] | @tsv'
+skillet list --json 'swift|ios|xcode'    # any of these words
+skillet list --json pull request         # every word
 ```
 
-Search with several words for the same need, and look at pack descriptions too (`.packs[]`).
-Without `jq`, read `skillet list --json` directly.
+Terms match names and descriptions of skills and of their packs, ignoring case, and may be regular
+expressions. Try several words for the same need. In the result, `skills` holds the matches keyed
+by name; `global` and `project` tell whether a match is enabled.
 
 1. A match that is disabled: enable it (see Workflow), and tell the user which skill you picked and why.
 2. A match that is enabled but not loaded in this session: it becomes available in the next
@@ -62,6 +62,7 @@ project: say so, and offer to disable it globally and enable it with `-p` in the
    skillet list --json              # everything
    skillet list --enabled --json    # only what is enabled globally or in this project
    skillet list --pack ios --json   # one pack
+   skillet list --json review       # only what matches the terms
    ```
 
    The output has `packs` (`name`, `description`, `skills`) and `skills` keyed by name
