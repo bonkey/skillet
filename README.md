@@ -10,10 +10,11 @@ skillet links whole skill folders, so multi-file skills arrive complete. Packs o
 ## Install
 
 ```sh
-go install github.com/bonkey/skillet@latest
+mise use -g ubi:bonkey/skillet               # release binary, through mise
+go install github.com/bonkey/skillet@latest  # from source, with Go
 ```
 
-Archives for macOS and Linux are attached to each
+Pin a version with `ubi:bonkey/skillet@0.1.0`. Archives for macOS and Linux are attached to each
 [release](https://github.com/bonkey/skillet/releases). skillet needs `git`, and the `gh` CLI for
 the gist commands.
 
