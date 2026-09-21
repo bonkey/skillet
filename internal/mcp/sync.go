@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"regexp"
 	"slices"
 	"sort"
 
@@ -16,10 +16,9 @@ import (
 )
 
 const (
-	OpAdd      = "mcp-add"
-	OpUpdate   = "mcp-update"
-	OpRemove   = "mcp-remove"
-	OpConflict = "mcp-conflict" // an entry of that name exists and skillet did not write it
+	OpAdd    = "mcp-add"
+	OpUpdate = "mcp-update" // also when the entry was there before skillet managed it
+	OpRemove = "mcp-remove"
 )
 
 type Action struct {
@@ -29,15 +28,21 @@ type Action struct {
 }
 
 func (a Action) String() string {
-	if a.Op == OpConflict {
-		return fmt.Sprintf("%-12s %s in %s exists and is not managed by skillet; --force replaces it", a.Op, a.Name, a.File)
-	}
 	return fmt.Sprintf("%-12s %s in %s", a.Op, a.Name, a.File)
 }
 
-// State records, per config file, the entries skillet wrote. Only those are
-// ever changed or removed.
-type State map[string][]string
+// Record remembers one managed entry by two hashes: of the server's
+// definition with its ${NAME} placeholders unexpanded, and of the entry as it
+// was written. While both still match, the entry is up to date, and a sync
+// needs no secret to know that.
+type Record struct {
+	Def   string `json:"def"`
+	Entry string `json:"entry"`
+}
+
+// State records, per config file, the entries skillet manages: those it
+// wrote or took over. Only those are ever removed.
+type State map[string]map[string]Record
 
 func LoadState(file string) (State, error) {
 	state := State{}
@@ -48,7 +53,22 @@ func LoadState(file string) (State, error) {
 	if err != nil {
 		return nil, err
 	}
-	return state, json.Unmarshal(data, &state)
+	if json.Unmarshal(data, &state) == nil {
+		return state, nil
+	}
+	// A state file that lists plain names per config file.
+	var names map[string][]string
+	if err := json.Unmarshal(data, &names); err != nil {
+		return nil, fmt.Errorf("%s: %w", file, err)
+	}
+	state = State{}
+	for config, list := range names {
+		state[config] = map[string]Record{}
+		for _, name := range list {
+			state[config][name] = Record{}
+		}
+	}
+	return state, nil
 }
 
 func (s State) Save(file string) error {
@@ -63,11 +83,20 @@ func (s State) Save(file string) error {
 }
 
 type Options struct {
-	// Keep names servers to leave exactly as they are, present or not.
-	Keep []string
-	// Force takes over entries skillet did not write.
-	Force  bool
 	DryRun bool
+}
+
+// Expand fills in the secrets of a definition and lists the placeholders
+// that have no value.
+type Expand func(def catalog.MCP) (catalog.MCP, []string)
+
+// shapes changes whenever a Render function does, so that entries written
+// in an older shape are rewritten.
+const shapes = "1"
+
+func hashOf(parts ...any) string {
+	data, _ := json.Marshal(parts)
+	return fmt.Sprintf("%x", sha256.Sum256(data))
 }
 
 // document is a config file opened for editing server entries.
@@ -76,8 +105,8 @@ type document interface {
 	same(name string, entry Entry) (bool, error)
 	set(name string, entry Entry) error
 	remove(name string) error
-	// enabled reports whether a present entry is switched on.
-	enabled(name string) bool
+	// hash identifies the content of a present entry.
+	hash(name string) string
 	bytes() []byte
 }
 
@@ -94,20 +123,12 @@ func (d jsonDocument) same(name string, entry Entry) (bool, error) {
 	return ok && reflect.DeepEqual(value, entry.plain()), err
 }
 
-func (d jsonDocument) enabled(name string) bool {
+func (d jsonDocument) hash(name string) string {
 	value, _, _ := d.get(d.node, name)
-	entry, _ := value.(map[string]any)
-	return entry["enabled"] != false && entry["disabled"] != true
+	return hashOf(value)
 }
 
 type tomlDocument struct{ *tomlFile }
-
-var tomlDisabled = regexp.MustCompile(`(?m)^\s*enabled\s*=\s*false\b`)
-
-func (d tomlDocument) enabled(name string) bool {
-	text, _ := d.get(name)
-	return !tomlDisabled.MatchString(text)
-}
 
 func (d tomlDocument) names() ([]string, error)           { return d.tomlFile.names(), nil }
 func (d tomlDocument) set(name string, entry Entry) error { d.tomlFile.set(name, entry); return nil }
@@ -115,6 +136,11 @@ func (d tomlDocument) remove(name string) error           { d.tomlFile.remove(na
 func (d tomlDocument) same(name string, entry Entry) (bool, error) {
 	text, ok := d.get(name)
 	return ok && text == d.render(name, entry), nil
+}
+
+func (d tomlDocument) hash(name string) string {
+	text, _ := d.get(name)
+	return hashOf(text)
 }
 
 func open(target Target, data []byte) (document, error) {
@@ -127,10 +153,16 @@ func open(target Target, data []byte) (document, error) {
 }
 
 // Sync makes the agents' config files below home hold exactly the desired
-// servers among the entries skillet manages. Agents without a target are
-// skipped. An entry that already has the desired content is adopted.
-func Sync(home string, agents []string, desired map[string]catalog.MCP, state State, opt Options) ([]Action, error) {
+// servers among the entries skillet manages. An entry named like a desired
+// server is that server: it is overwritten when it differs, and managed from
+// then on. Agents without a target are skipped.
+//
+// desired holds definitions with their placeholders unexpanded. expand is
+// called only for a server whose entry may need writing; a server with
+// missing secrets is left as it is and returned with the missing names.
+func Sync(home string, agents []string, desired map[string]catalog.MCP, expand Expand, state State, opt Options) ([]Action, map[string][]string, error) {
 	var actions []Action
+	missing := map[string][]string{}
 	names := make([]string, 0, len(desired))
 	for name := range desired {
 		names = append(names, name)
@@ -144,74 +176,83 @@ func Sync(home string, agents []string, desired map[string]catalog.MCP, state St
 		}
 		file, doc, err := load(home, target)
 		if err != nil {
-			return actions, err
+			return actions, missing, err
 		}
 		present, err := doc.names()
 		if err != nil {
-			return actions, fmt.Errorf("%s: %w", file, err)
+			return actions, missing, fmt.Errorf("%s: %w", file, err)
 		}
 
-		owned := slices.Clone(state[file])
+		records := map[string]Record{}
+		for name, record := range state[file] {
+			records[name] = record
+		}
 		var planned []Action
-		for _, name := range state[file] {
-			_, wanted := desired[name]
-			if wanted || slices.Contains(opt.Keep, name) {
+		for _, name := range sortedNames(state[file]) {
+			if _, wanted := desired[name]; wanted {
 				continue
 			}
-			owned = slices.DeleteFunc(owned, func(n string) bool { return n == name })
+			delete(records, name)
 			if slices.Contains(present, name) {
 				planned = append(planned, Action{OpRemove, file, name})
 				if err := doc.remove(name); err != nil {
-					return actions, err
+					return actions, missing, err
 				}
 			}
 		}
 		for _, name := range names {
-			if slices.Contains(opt.Keep, name) {
+			def := desired[name]
+			defHash, isPresent := hashOf(shapes, agent, def), slices.Contains(present, name)
+			if record, managed := records[name]; managed && isPresent && record.Def == defHash && record.Entry == doc.hash(name) {
 				continue
 			}
-			entry := target.Render(desired[name])
+			expanded, lacking := expand(def)
+			if len(lacking) > 0 {
+				missing[name] = lacking
+				continue
+			}
+			entry := target.Render(expanded)
 			same, err := doc.same(name, entry)
 			if err != nil {
-				return actions, fmt.Errorf("%s: %w", file, err)
-			}
-			isOwned := slices.Contains(owned, name)
-			switch {
-			case same:
-			case !slices.Contains(present, name):
-				planned = append(planned, Action{OpAdd, file, name})
-			case isOwned || opt.Force:
-				planned = append(planned, Action{OpUpdate, file, name})
-			default:
-				planned = append(planned, Action{OpConflict, file, name})
-				continue
+				return actions, missing, fmt.Errorf("%s: %w", file, err)
 			}
 			if !same {
+				op := OpAdd
+				if isPresent {
+					op = OpUpdate
+				}
+				planned = append(planned, Action{op, file, name})
 				if err := doc.set(name, entry); err != nil {
-					return actions, err
+					return actions, missing, err
 				}
 			}
-			if !isOwned {
-				owned = append(owned, name)
-			}
+			records[name] = Record{Def: defHash, Entry: doc.hash(name)}
 		}
 		actions = append(actions, planned...)
 		if opt.DryRun {
 			continue
 		}
-		if changed := slices.ContainsFunc(planned, func(a Action) bool { return a.Op != OpConflict }); changed {
+		if len(planned) > 0 {
 			if err := writeFile(file, doc.bytes()); err != nil {
-				return actions, err
+				return actions, missing, err
 			}
 		}
-		sort.Strings(owned)
-		if len(owned) == 0 {
+		if len(records) == 0 {
 			delete(state, file)
 		} else {
-			state[file] = owned
+			state[file] = records
 		}
 	}
-	return actions, nil
+	return actions, missing, nil
+}
+
+func sortedNames(records map[string]Record) []string {
+	names := make([]string, 0, len(records))
+	for name := range records {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // writeFile replaces a file atomically. It keeps the mode of an existing
@@ -246,51 +287,6 @@ func load(home string, target Target) (string, document, error) {
 		return file, nil, fmt.Errorf("%s: %w", file, err)
 	}
 	return file, doc, nil
-}
-
-// Present lists the servers in an agent's config and whether each is
-// switched on there. An agent without a target has none.
-func Present(home, agent string) (map[string]bool, error) {
-	target, ok := Targets[agent]
-	if !ok {
-		return nil, nil
-	}
-	_, doc, err := load(home, target)
-	if err != nil {
-		return nil, err
-	}
-	names, err := doc.names()
-	if err != nil {
-		return nil, err
-	}
-	present := map[string]bool{}
-	for _, name := range names {
-		present[name] = doc.enabled(name)
-	}
-	return present, nil
-}
-
-// Adopt marks servers that are present in the agents' configs as written by
-// skillet, so that a sync may change and remove them.
-func Adopt(home string, agents, names []string, state State) error {
-	for _, agent := range agents {
-		target, ok := Targets[agent]
-		if !ok {
-			continue
-		}
-		present, err := Present(home, agent)
-		if err != nil {
-			return err
-		}
-		file := filepath.Join(home, filepath.FromSlash(target.File))
-		for _, name := range names {
-			if _, ok := present[name]; ok && !slices.Contains(state[file], name) {
-				state[file] = append(state[file], name)
-			}
-		}
-		sort.Strings(state[file])
-	}
-	return nil
 }
 
 // Managed lists the agents whose config holds entries that skillet wrote.

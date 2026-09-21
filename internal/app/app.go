@@ -31,6 +31,8 @@ type App struct {
 	Catalog *catalog.Catalog
 	Index   *source.Index
 	Gists   gist.Client
+	// OnePassword reads the items listed under `secrets` in the catalog.
+	OnePassword secrets.Reader
 
 	// Force lets every sync delete unmanaged entries that stand where an
 	// enabled skill goes.
@@ -38,11 +40,7 @@ type App struct {
 
 	LastSync SyncReport
 
-	// adoptMCPs names servers whose existing entries in agent configs the
-	// next sync takes over. dryRunSecrets stands in for the secrets file.
-	adoptMCPs     []string
-	dryRunSecrets secrets.Store
-
+	Notices  []string   // one-time remarks from opening the config
 	Included []Included // the included gists, flattened in merge order
 	Warnings []string   // problems with included gists
 }
@@ -50,20 +48,39 @@ type App struct {
 func Open(p paths.Paths) (*App, error) { return OpenWith(p, gist.GH{}) }
 
 func OpenWith(p paths.Paths, client gist.Client) (*App, error) {
-	local, err := catalog.Load(p.CatalogFile())
+	moved, err := adoptLegacyConfig(p)
 	if err != nil {
 		return nil, err
 	}
-	a := &App{Paths: p, Local: local, Gists: client}
+	local, err := catalog.Load(p.ConfigFile())
+	if err != nil {
+		return nil, err
+	}
+	a := &App{Paths: p, Local: local, Gists: client, OnePassword: secrets.OP{}}
+	if moved {
+		a.Notices = append(a.Notices, fmt.Sprintf("moved %s to %s", p.LegacyConfigFile(), p.ConfigFile()))
+	}
 	if err := a.reload(false); err != nil {
 		return nil, err
 	}
 	return a, a.Reindex()
 }
 
+// adoptLegacyConfig moves a config file that has the legacy name, when no
+// file of the current name exists.
+func adoptLegacyConfig(p paths.Paths) (bool, error) {
+	if _, err := os.Stat(p.ConfigFile()); !os.IsNotExist(err) {
+		return false, nil
+	}
+	if _, err := os.Stat(p.LegacyConfigFile()); err != nil {
+		return false, nil
+	}
+	return true, os.Rename(p.LegacyConfigFile(), p.ConfigFile())
+}
+
 // Save writes the local catalog and rebuilds the merged one.
 func (a *App) Save() error {
-	if err := a.Local.Save(a.Paths.CatalogFile()); err != nil {
+	if err := a.Local.Save(a.Paths.ConfigFile()); err != nil {
 		return err
 	}
 	return a.reload(false)
@@ -205,9 +222,10 @@ func (a *App) sync(scope Scope, opt SyncOptions) (SyncReport, error) {
 // syncMCP writes the globally enabled servers into the user configs of the
 // configured agents. A running session adds its servers for the agent it
 // started, or for every agent when it started none of them. A server whose
-// secrets are not all known is left as it is.
+// secrets are not all known is left as it is. Secrets are looked up only for
+// entries that may need writing.
 func (a *App) syncMCP(report *SyncReport, dryRun bool) error {
-	store, err := a.secrets()
+	resolver, err := a.resolver()
 	if err != nil {
 		return err
 	}
@@ -234,9 +252,7 @@ func (a *App) syncMCP(report *SyncReport, dryRun bool) error {
 				"crush prefers ~/.config/crush/crushrc over crush.json, where skillet writes its servers")
 		}
 	}
-	if err := mcp.Adopt(a.Paths.Home, agents, a.adoptMCPs, state); err != nil {
-		return err
-	}
+	expand := func(def catalog.MCP) (catalog.MCP, []string) { return expandMCP(def, resolver.Expand) }
 	for _, agent := range agents {
 		var servers []string
 		if slices.Contains(a.Catalog.Agents, agent) {
@@ -248,26 +264,23 @@ func (a *App) syncMCP(report *SyncReport, dryRun bool) error {
 			}
 		}
 		desired := map[string]catalog.MCP{}
-		var keep []string
 		for _, name := range servers {
-			def, missing := expandMCP(*a.Catalog.MCPs[name], store)
-			if len(missing) > 0 {
-				if report.MissingSecrets == nil {
-					report.MissingSecrets = map[string][]string{}
-				}
-				report.MissingSecrets[name] = missing
-				keep = append(keep, name)
-				continue
-			}
-			desired[name] = def
+			desired[name] = *a.Catalog.MCPs[name]
 		}
-		actions, err := mcp.Sync(a.Paths.Home, []string{agent}, desired, state, mcp.Options{
-			Keep: keep, Force: a.Force, DryRun: dryRun,
-		})
+		actions, missing, err := mcp.Sync(a.Paths.Home, []string{agent}, desired, expand, state, mcp.Options{DryRun: dryRun})
 		report.MCP = append(report.MCP, actions...)
+		for name, names := range missing {
+			if report.MissingSecrets == nil {
+				report.MissingSecrets = map[string][]string{}
+			}
+			report.MissingSecrets[name] = names
+		}
 		if err != nil {
 			return err
 		}
+	}
+	for _, problem := range resolver.Problems {
+		report.Notes = append(report.Notes, "1Password: "+problem)
 	}
 	if dryRun {
 		return nil
@@ -275,19 +288,26 @@ func (a *App) syncMCP(report *SyncReport, dryRun bool) error {
 	return state.Save(a.Paths.MCPStateFile())
 }
 
-func (a *App) secrets() (secrets.Store, error) {
-	if a.dryRunSecrets != nil {
-		return a.dryRunSecrets, nil
+// resolver looks secrets up in the local store and then in the 1Password
+// items of the local catalog.
+func (a *App) resolver() (*secrets.Resolver, error) {
+	local, err := secrets.Load(a.Paths.SecretsFile())
+	if err != nil {
+		return nil, err
 	}
-	return secrets.Load(a.Paths.SecretsFile())
+	r := &secrets.Resolver{Local: local, Reader: a.OnePassword}
+	for _, item := range a.Local.Secrets {
+		r.Items = append(r.Items, secrets.Item{Account: item.Account, Vault: item.Vault, Item: item.Item})
+	}
+	return r, nil
 }
 
 // expandMCP fills in the secrets of a definition and lists the placeholders
 // that have no value.
-func expandMCP(def catalog.MCP, store secrets.Store) (catalog.MCP, []string) {
+func expandMCP(def catalog.MCP, expandText func(string) (string, []string)) (catalog.MCP, []string) {
 	var missing []string
 	expand := func(text string) string {
-		out, names := store.Expand(text)
+		out, names := expandText(text)
 		for _, name := range names {
 			if !slices.Contains(missing, name) {
 				missing = append(missing, name)

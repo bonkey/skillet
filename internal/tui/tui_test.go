@@ -28,7 +28,7 @@ func model(t *testing.T) *Model {
 	c.Sources["acme/skills"] = &catalog.Source{URL: "x", Skills: []string{"alpha", "beta", "loose"}}
 	c.MCPs["simctl"] = &catalog.MCP{Type: "local", Command: []string{"npx", "-y", "simctl-mcp"}}
 	c.Packs["acme"] = &catalog.Pack{Description: "Acme skills", Skills: []string{"alpha", "beta"}, MCPs: []string{"simctl"}}
-	if err := c.Save(p.CatalogFile()); err != nil {
+	if err := c.Save(p.ConfigFile()); err != nil {
 		t.Fatal(err)
 	}
 	a, err := app.Open(p)

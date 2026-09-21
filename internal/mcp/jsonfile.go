@@ -130,7 +130,7 @@ func (f *jsonFile) set(node []string, name string, entry Entry) error {
 		return err
 	}
 	indent := strings.Repeat(f.unit, len(node)+1)
-	text, err := json.MarshalIndent(entry, indent, f.unit)
+	text, err := encode(entry, indent, f.unit)
 	if err != nil {
 		return err
 	}

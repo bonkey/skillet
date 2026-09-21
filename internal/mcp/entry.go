@@ -33,8 +33,8 @@ func (e Entry) MarshalJSON() ([]byte, error) {
 		if i > 0 {
 			buf.WriteByte(',')
 		}
-		key, _ := json.Marshal(field.Key)
-		value, err := json.Marshal(field.Value)
+		key, _ := encode(field.Key, "", "")
+		value, err := encode(field.Value, "", "")
 		if err != nil {
 			return nil, err
 		}
@@ -53,4 +53,17 @@ func (e Entry) plain() any {
 	var out any
 	json.Unmarshal(data, &out)
 	return out
+}
+
+// encode marshals JSON and leaves &, < and > as they are, so that a URL
+// reads in a config file the way it was written in the catalog.
+func encode(v any, prefix, indent string) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent(prefix, indent)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimRight(buf.Bytes(), "\n"), nil
 }

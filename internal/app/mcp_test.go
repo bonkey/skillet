@@ -11,6 +11,12 @@ import (
 	"github.com/bonkey/skillet/internal/secrets"
 )
 
+// writeSecrets stands for the user editing secrets.yaml.
+func writeSecrets(t *testing.T, e env, content string) {
+	t.Helper()
+	write(t, e.p.SecretsFile(), content)
+}
+
 func read(t *testing.T, file string) string {
 	t.Helper()
 	data, err := os.ReadFile(file)
@@ -56,15 +62,14 @@ func TestEnablingAPackWritesItsServers(t *testing.T) {
 		t.Error("the pack's skill is linked too")
 	}
 
-	store := secrets.Store{"TAVILY_API_KEY": "tvly-secret"}
-	store.Save(e.p.SecretsFile())
+	writeSecrets(t, e, "TAVILY_API_KEY: tvly-secret\n")
 	if _, err := e.app.Sync(e.app.Global(), SyncOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if text := read(t, codex); !strings.Contains(text, `url = "https://mcp.tavily.com/mcp?tavilyApiKey=tvly-secret"`) {
 		t.Errorf("codex config:\n%s", text)
 	}
-	if raw := read(t, e.p.CatalogFile()); strings.Contains(raw, "tvly-secret") {
+	if raw := read(t, e.p.ConfigFile()); strings.Contains(raw, "tvly-secret") {
 		t.Error("a secret value must never reach the catalog")
 	}
 	view, _ := e.app.View()
@@ -152,111 +157,127 @@ func TestRunLimitsServersToTheAgentItStarts(t *testing.T) {
 
 func TestImportMCPSetup(t *testing.T) {
 	e := setup(t)
-	e.app.Local.Agents = []string{"claude-code", "opencode"}
-	e.app.Save()
 	claude := filepath.Join(e.p.Home, ".claude.json")
-	opencode := filepath.Join(e.p.Home, ".config", "opencode", "opencode.json")
-	cursor := filepath.Join(e.p.Home, ".cursor", "mcp.json")
 	write(t, e.app.MCPSetupConfig(), `{
   "presets": {"research": ["tavily", "firecrawl"], "ios-dev": ["simctl"], "empty": ["ghost"]},
   "mcps": {
-    "tavily": {"type": "remote", "url": "https://mcp.tavily.com/mcp/?tavilyApiKey=tvly-1&profile=x"},
-    "firecrawl": {"type": "local", "command": ["npx", "-y", "firecrawl-mcp", "--api-token=fc-arg"],
-                  "environment": {"FIRECRAWL_API_KEY": "fc-1"}},
-    "simctl": {"type": "local", "command": ["npx", "-y", "simctl-mcp"]},
-    "hdr": {"type": "remote", "url": "https://x/mcp", "headers": {"Authorization": "Bearer hdr-1"}},
+    "tavily": {"type": "remote", "url": "https://mcp.tavily.com/mcp/?tavilyApiKey=tvly-1"},
+    "firecrawl": {"type": "local", "command": ["npx", "-y", "firecrawl-mcp"], "environment": {"FIRECRAWL_API_KEY": "fc-1"}},
+    "simctl": {"type": "local", "command": ["npx", "-y", "simctl-mcp"], "timeout": 20},
     "broken": {"type": "local"}
   }
 }`)
-	// What mcp-setup left behind: an entry that differs from skillet's
-	// rendering, a disabled one, and one in an agent that is not configured.
 	write(t, claude, `{"mcpServers": {"tavily": {"type": "http", "url": "https://old"}, "mine": {"url": "https://mine"}}}`)
-	write(t, opencode, `{"mcp": {"simctl": {"type": "local", "command": ["npx", "-y", "simctl-mcp"], "enabled": false}}}`)
-	write(t, cursor, `{"mcpServers": {"hdr": {"url": "https://x/mcp"}}}`)
+	before := read(t, claude)
 
-	before := map[string]string{claude: read(t, claude), opencode: read(t, opencode), cursor: read(t, cursor)}
-	report, err := e.app.ImportMCP(e.app.MCPSetupConfig(), false, false)
+	report, err := e.app.ImportMCP(e.app.MCPSetupConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(report.Servers, []string{"firecrawl", "hdr", "simctl", "tavily"}) || report.Skipped["broken"] == "" {
+	if !reflect.DeepEqual(report.Servers, []string{"firecrawl", "simctl", "tavily"}) || report.Skipped["broken"] == "" {
 		t.Errorf("servers: %v skipped: %v", report.Servers, report.Skipped)
 	}
-	if !reflect.DeepEqual(report.Packs, []string{"ios-dev", "research"}) || !reflect.DeepEqual(report.OtherAgents, []string{"cursor"}) {
-		t.Errorf("packs: %v, other agents: %v", report.Packs, report.OtherAgents)
+	if !reflect.DeepEqual(report.Packs, []string{"ios-dev", "research"}) {
+		t.Errorf("packs: %v", report.Packs)
 	}
-	for file, content := range before {
-		if read(t, file) != content {
-			t.Errorf("a plain import must not change %s", file)
-		}
+	if read(t, claude) != before || !e.app.Local.Enabled.Empty() {
+		t.Error("an import enables nothing and changes no agent config")
 	}
-	if !e.app.Local.Enabled.Empty() {
-		t.Errorf("a plain import enables nothing: %+v", e.app.Local.Enabled)
+	reopened, _ := Open(e.p)
+	if got := reopened.Catalog.MCPs["firecrawl"]; got == nil || got.Environment["FIRECRAWL_API_KEY"] != "fc-1" || reopened.Catalog.MCPs["simctl"].Timeout != 20 {
+		t.Errorf("definitions are copied as they are: %+v", got)
 	}
-	store, _ := secrets.Load(e.p.SecretsFile())
-	want := secrets.Store{"TAVILY_API_KEY": "tvly-1", "FIRECRAWL_API_KEY": "fc-1",
-		"FIRECRAWL_API_TOKEN": "fc-arg", "HDR_AUTHORIZATION": "hdr-1"}
-	if !reflect.DeepEqual(store, want) {
-		t.Errorf("secrets: %v", store.Names())
-	}
-	raw := read(t, e.p.CatalogFile())
-	for _, value := range []string{"tvly-1", "fc-1", "fc-arg", "hdr-1"} {
-		if strings.Contains(raw, value) {
-			t.Errorf("the catalog holds the secret %q", value)
-		}
-	}
-	for _, placeholder := range []string{"tavilyApiKey=${TAVILY_API_KEY}&profile=x", "--api-token=${FIRECRAWL_API_TOKEN}", "Bearer ${HDR_AUTHORIZATION}"} {
-		if !strings.Contains(raw, placeholder) {
-			t.Errorf("the catalog lacks %q:\n%s", placeholder, raw)
-		}
+	if got := reopened.Catalog.Packs["research"]; got == nil || !reflect.DeepEqual(got.MCPs, []string{"firecrawl", "tavily"}) || got.Description == "" {
+		t.Errorf("presets become packs: %+v", got)
 	}
 
-	// Enabling meets the entry mcp-setup left: it differs, so it is a conflict.
-	toggled, err := e.app.Toggle(e.app.Global(), true, "mcp:tavily")
-	if err != nil || len(toggled.MCP) != 2 || read(t, claude) != before[claude] {
-		t.Fatalf("a differing unmanaged entry is a conflict: %+v %v", toggled.MCP, err)
+	// Enabling meets the entry mcp-setup left under the same name and overwrites it.
+	if _, err := e.app.Toggle(e.app.Global(), true, "mcp:tavily"); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(read(t, opencode), "tavilyApiKey=tvly-1") {
-		t.Errorf("an agent without such an entry gets it:\n%s", read(t, opencode))
+	if text := read(t, claude); !strings.Contains(text, "tavilyApiKey=tvly-1") || strings.Contains(text, "https://old") || !strings.Contains(text, "https://mine") {
+		t.Errorf("claude config:\n%s", text)
 	}
 
-	again, err := e.app.ImportMCP(e.app.MCPSetupConfig(), false, false)
-	if err != nil || len(again.Servers) != 0 {
+	again, err := e.app.ImportMCP(e.app.MCPSetupConfig())
+	if err != nil || len(again.Servers) != 0 || len(again.Skipped) != 4 {
 		t.Errorf("a second import adds nothing: %+v %v", again, err)
 	}
 }
 
-func TestImportMCPSetupAdopting(t *testing.T) {
+// fakeOnePassword serves item fields from memory and counts the reads.
+type fakeOnePassword struct {
+	items map[string]map[string]string
+	reads int
+}
+
+func (f *fakeOnePassword) Fields(item secrets.Item) (map[string]string, error) {
+	f.reads++
+	if fields, ok := f.items[item.Item]; ok {
+		return fields, nil
+	}
+	return nil, os.ErrPermission
+}
+
+func TestSecretsComeFromOnePasswordItemsOnlyWhenNeeded(t *testing.T) {
 	e := setup(t)
-	e.app.Local.Agents = []string{"claude-code", "opencode"}
+	withServers(t, e)
+	op := &fakeOnePassword{items: map[string]map[string]string{"personal": {"TAVILY_API_KEY": "from-1password"}}}
+	e.app.OnePassword = op
+	e.app.Local.Secrets = []catalog.SecretItem{{Account: "me.1password.com", Vault: "v", Item: "personal"}}
 	e.app.Save()
 	claude := filepath.Join(e.p.Home, ".claude.json")
-	opencode := filepath.Join(e.p.Home, ".config", "opencode", "opencode.json")
-	write(t, e.app.MCPSetupConfig(), `{"presets": {"ios-dev": ["simctl"]},
-  "mcps": {"simctl": {"type": "local", "command": ["npx", "-y", "simctl-mcp"]},
-           "tavily": {"type": "remote", "url": "https://mcp.tavily.com/mcp"}}}`)
-	write(t, claude, `{"mcpServers": {"tavily": {"type": "http", "url": "https://old"}, "mine": {"url": "https://mine"}}}`)
-	write(t, opencode, `{"mcp": {"simctl": {"type": "local", "command": ["npx", "-y", "simctl-mcp"], "enabled": false}}}`)
 
-	dry, err := e.app.ImportMCP(e.app.MCPSetupConfig(), true, true)
-	if err != nil || len(dry.Sync.MCP) != 2 {
-		t.Fatalf("the dry run reports both removals: %+v %v", dry.Sync.MCP, err)
+	if _, err := e.app.Toggle(e.app.Global(), true, "mcp:simctl"); err != nil || op.reads != 0 {
+		t.Fatalf("a server without placeholders needs no item: %d reads, %v", op.reads, err)
 	}
-	if _, err := os.Stat(e.p.SecretsFile()); !os.IsNotExist(err) || !strings.Contains(read(t, claude), "https://old") {
-		t.Fatal("a dry run writes nothing")
+	report, err := e.app.Toggle(e.app.Global(), true, "mcp:tavily")
+	if err != nil || len(report.MissingSecrets) != 0 || !strings.Contains(read(t, claude), "tavilyApiKey=from-1password") {
+		t.Fatalf("the field of the item fills the placeholder: %+v %v", report, err)
+	}
+	if raw := read(t, e.p.ConfigFile()) + read(t, e.p.MCPStateFile()); strings.Contains(raw, "from-1password") {
+		t.Error("the value must reach neither the catalog nor the state file")
+	}
+	if _, err := os.Stat(e.p.SecretsFile()); !os.IsNotExist(err) {
+		t.Error("nothing is stored locally")
 	}
 
-	fresh, _ := Open(e.p)
-	if _, err := fresh.ImportMCP(fresh.MCPSetupConfig(), false, true); err != nil {
-		t.Fatal(err)
+	reads := op.reads
+	for range 3 {
+		if _, err := e.app.Sync(e.app.Global(), SyncOptions{}); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if text := read(t, claude); strings.Contains(text, "tavily") || !strings.Contains(text, "https://mine") {
-		t.Errorf("adopted entries that are not enabled go, the user's own stays:\n%s", text)
+	view, _ := e.app.View()
+	if op.reads != reads || len(view.MCPs["tavily"].MissingSecrets) != 0 {
+		t.Errorf("unchanged syncs and listings read no item: %d -> %d reads", reads, op.reads)
 	}
-	if strings.Contains(read(t, opencode), "simctl") {
-		t.Errorf("opencode:\n%s", read(t, opencode))
+
+	// A local value wins over the item.
+	writeSecrets(t, e, "TAVILY_API_KEY: local-override\n")
+	e.app.Local.MCPs["tavily"].URL += "&v=2"
+	e.app.Save()
+	if _, err := e.app.Sync(e.app.Global(), SyncOptions{}); err != nil || !strings.Contains(read(t, claude), "local-override&v=2") {
+		t.Errorf("local override: %v\n%s", err, read(t, claude))
 	}
-	if _, err := fresh.Toggle(fresh.Global(), true, "@ios-dev"); err != nil || !strings.Contains(read(t, claude), "simctl-mcp") {
-		t.Errorf("enabling the pack writes its server: %v\n%s", err, read(t, claude))
+}
+
+func TestAnUnreadableItemLeavesServersAlone(t *testing.T) {
+	e := setup(t)
+	withServers(t, e)
+	e.app.OnePassword = &fakeOnePassword{}
+	e.app.Local.Secrets = []catalog.SecretItem{{Account: "me.1password.com", Vault: "v", Item: "locked"}}
+	e.app.Save()
+
+	report, err := e.app.Toggle(e.app.Global(), true, "@ios")
+	if err != nil {
+		t.Fatalf("an item that cannot be read must not fail the sync: %v", err)
+	}
+	if !reflect.DeepEqual(report.MissingSecrets, map[string][]string{"tavily": {"TAVILY_API_KEY"}}) ||
+		len(report.Notes) == 0 || !strings.Contains(report.Notes[0], "1Password") {
+		t.Errorf("report: %+v", report)
+	}
+	if text := read(t, filepath.Join(e.p.Home, ".claude.json")); !strings.Contains(text, "simctl") || strings.Contains(text, "tavily") {
+		t.Errorf("the other server is written:\n%s", text)
 	}
 }

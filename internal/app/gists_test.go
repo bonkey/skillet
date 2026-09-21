@@ -124,7 +124,7 @@ func TestPushAndPull(t *testing.T) {
 	other.Config, other.Data = filepath.Join(other.Home, "config"), filepath.Join(other.Home, "data")
 	old := catalog.New()
 	old.Packs["old"] = &catalog.Pack{Description: "Old"}
-	old.Save(other.CatalogFile())
+	old.Save(other.ConfigFile())
 	b, err := OpenWith(other, gists)
 	if err != nil {
 		t.Fatal(err)
@@ -138,7 +138,7 @@ func TestPushAndPull(t *testing.T) {
 	if !isLink(filepath.Join(other.Home, ".claude", "skills", "alpha")) {
 		t.Error("pull should fetch the sources and link the enabled skills")
 	}
-	if backup, _ := os.ReadFile(other.CatalogFile() + ".bak"); !strings.Contains(string(backup), "Old") {
+	if backup, _ := os.ReadFile(other.ConfigFile() + ".bak"); !strings.Contains(string(backup), "Old") {
 		t.Error("the previous catalog should be kept as a backup")
 	}
 	if _, err := b.Pull(""); err != nil {
@@ -175,7 +175,7 @@ func TestIncludesMergeOnceAndSurviveCycles(t *testing.T) {
 	if view.Skills["beta"].From != gistB || view.Packs[0].From != gistA {
 		t.Errorf("origins: %+v %+v", view.Skills["beta"], view.Packs[0])
 	}
-	raw, _ := os.ReadFile(e.p.CatalogFile())
+	raw, _ := os.ReadFile(e.p.ConfigFile())
 	if strings.Contains(string(raw), "alpha") {
 		t.Errorf("included entries must not be copied into the local catalog:\n%s", raw)
 	}

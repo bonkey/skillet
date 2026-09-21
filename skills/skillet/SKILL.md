@@ -48,7 +48,7 @@ matching servers the same way, with their command or URL as `target`.
 | The user means | Flag | Effect |
 | --- | --- | --- |
 | this project, this repo, this task | `-p` | Links in `./.claude/skills` and `./.agents/skills`; the set is saved in `.skillet.yaml` at the project root. Without a `.skillet.yaml` up the tree, `-p` creates one in the working directory. |
-| everywhere, always, by default | none | Links in `~/.claude/skills` and `~/.agents/skills`; the set is saved in `~/.config/skillet/catalog.yaml`. |
+| everywhere, always, by default | none | Links in `~/.claude/skills` and `~/.agents/skills`; the set is saved in `~/.config/skillet/config.yaml`. |
 
 When the request names no scope, prefer `-p` for skills a task needs and the global scope for
 skills the user wants in general. Ask when the choice matters and is unclear.
@@ -95,11 +95,15 @@ project: say so, and offer to disable it globally and enable it with `-p` in the
   prints a `note` naming the servers it skipped. Enable those globally, or suggest `skillet run`.
 - `skillet enable mcp:tavily` and `skillet disable mcp:tavily` write and remove the server in the
   user config of every configured agent. Lines start with `mcp-add`, `mcp-update` or `mcp-remove`.
+  An entry of the same name that is already in an agent's config is overwritten with the
+  catalog's definition.
 - An agent loads its servers at start. Tell the user that the change takes effect in the next
   session of that agent.
-- Never ask for, read, print or write a secret value. When a line says
-  `missing-secret mcp:<name> ... no value for <NAME>`, ask the user to run
-  `skillet secret set <NAME>` themselves; the following sync writes the server.
+- Never ask for, read, print or write a secret value. Secrets come from the user's 1Password
+  items or a local file. When a line says `missing-secret mcp:<name> ... no value for <NAME>`, or
+  a `note` mentions 1Password, tell the user: they add a field `<NAME>` to their 1Password item,
+  unlock 1Password, or add a `<NAME>: value` line to `~/.config/skillet/secrets.yaml` themselves;
+  the following sync writes the server.
 - Do not edit `~/.config/skillet/secrets.yaml` or the agents' MCP config files by hand, and do not
   add a server definition to the catalog without the user's consent.
 
@@ -121,7 +125,6 @@ running in; suggest the command to the user.
 | Output | Cause | What to do |
 | --- | --- | --- |
 | `conflict <path> exists and is not managed by skillet` | A file, folder or foreign link stands where the skill goes. | Show the path to the user. With their consent, rerun the same command with `--force`, which deletes that entry. |
-| `mcp-conflict <name> in <file> exists and is not managed by skillet` | The agent's config already has a different server of that name. | Show it to the user. With their consent, rerun with `--force`, which overwrites that entry. |
 | `missing <skill> is enabled but not found in its source` | The source is not cloned, or the skill left the repository. | Run `skillet update`, then `skillet sync`. If it stays missing, tell the user. |
 | `unknown skill "<name>"` or `unknown pack "<name>"` | The name is not in the catalog. | Check `skillet list --json`. If the skill is not there, `skillet add <owner/repo>` lists what a source offers; adding is the user's call. |
 | `the home directory cannot be a project` | `-p` was used in `~`. | Use the global scope, or change to the project directory. |

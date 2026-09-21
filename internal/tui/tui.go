@@ -580,11 +580,6 @@ func syncSummary(report app.SyncReport) string {
 			conflicts++
 		}
 	}
-	for _, action := range report.MCP {
-		if action.Op == "mcp-conflict" {
-			conflicts++
-		}
-	}
 	var parts []string
 	if conflicts > 0 {
 		parts = append(parts, fmt.Sprintf("%d conflicts with unmanaged entries", conflicts))
@@ -593,7 +588,7 @@ func syncSummary(report app.SyncReport) string {
 		parts = append(parts, "missing from source: "+strings.Join(report.Missing, ", "))
 	}
 	for server, names := range report.MissingSecrets {
-		parts = append(parts, fmt.Sprintf("mcp:%s needs `skillet secret set %s`", server, strings.Join(names, " ")))
+		parts = append(parts, fmt.Sprintf("mcp:%s has no value for %s", server, strings.Join(names, ", ")))
 	}
 	parts = append(parts, report.Notes...)
 	return strings.Join(parts, "; ")
@@ -743,7 +738,7 @@ func (m *Model) detail() string {
 		lines := []string{styleTitle.Render("mcp:" + server.Name), "", server.Type + " MCP server", server.Target, ""}
 		if len(server.MissingSecrets) > 0 {
 			lines = append(lines, styleWarn.Render("no value for "+strings.Join(server.MissingSecrets, ", ")+
-				" — run `skillet secret set <NAME>`"), "")
+				": add the field to a 1Password item under `secrets`, or a line to secrets.yaml"), "")
 		}
 		packs := "none"
 		if len(server.Packs) > 0 {

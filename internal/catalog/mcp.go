@@ -11,6 +11,13 @@ import (
 // command arguments and in Set.Except.
 const MCPPrefix = "mcp:"
 
+// SecretItem names a 1Password item.
+type SecretItem struct {
+	Account string `yaml:"account"` // sign-in address or account id
+	Vault   string `yaml:"vault"`
+	Item    string `yaml:"item"`
+}
+
 // MCP defines one MCP server. String fields may hold ${NAME} placeholders
 // for secrets.
 type MCP struct {

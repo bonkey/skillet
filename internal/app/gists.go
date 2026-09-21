@@ -119,7 +119,7 @@ func (a *App) Push(fresh, public bool) (id string, created bool, err error) {
 			return id, created, err
 		}
 	}
-	data, err := os.ReadFile(a.Paths.CatalogFile())
+	data, err := os.ReadFile(a.Paths.ConfigFile())
 	if err != nil {
 		return id, created, err
 	}
@@ -127,7 +127,7 @@ func (a *App) Push(fresh, public bool) (id string, created bool, err error) {
 }
 
 // Pull replaces the local catalog with the one in a gist ("" for the
-// catalog's own gist), keeps the previous file as catalog.yaml.bak, fetches
+// catalog's own gist), keeps the previous file as config.yaml.bak, fetches
 // what is missing and syncs the global links.
 func (a *App) Pull(ref string) (string, error) {
 	if ref == "" {
@@ -148,8 +148,8 @@ func (a *App) Pull(ref string) (string, error) {
 	if err != nil {
 		return id, fmt.Errorf("gist %s: %w", id, err)
 	}
-	if old, err := os.ReadFile(a.Paths.CatalogFile()); err == nil {
-		if err := os.WriteFile(a.Paths.CatalogFile()+".bak", old, 0o644); err != nil {
+	if old, err := os.ReadFile(a.Paths.ConfigFile()); err == nil {
+		if err := os.WriteFile(a.Paths.ConfigFile()+".bak", old, 0o644); err != nil {
 			return id, err
 		}
 	}

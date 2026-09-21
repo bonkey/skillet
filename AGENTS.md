@@ -12,13 +12,14 @@ symlinks. `README.md` describes the behaviour; keep it short and focused on the 
 - `internal/session` — `skillet run` sessions
 - `internal/mcp` — MCP server entries in the agents' user configs: per-agent shapes, a
   comment-preserving JSON editor, a text-level TOML section editor, ownership state
-- `internal/secrets` — the local store behind `${NAME}` placeholders
+- `internal/secrets` — the values behind `${NAME}` placeholders: a local store and 1Password
+  items, read lazily through the `op` CLI
 - `internal/gist` — gist access through `gh api`
 - `internal/importer` — the lock file of the `skills` npm CLI
 - `internal/app` — every operation; the CLI and the TUI both call it
 - `internal/tui` — Bubble Tea front end; view state only
 - `skills/skillet/SKILL.md` — the skill that teaches agents to enable and disable skills with the CLI
-- `examples/catalog.yaml` — a starting catalog with that skill enabled; a test loads it
+- `examples/config.yaml` — a starting catalog with that skill enabled; a test loads it
 
 `App.Local` is the catalog that is edited and saved. `App.Catalog` is `Local` merged with the
 included gists, and is what everything reads. Change `Local`, then call `Save`.

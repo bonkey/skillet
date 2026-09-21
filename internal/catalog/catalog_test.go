@@ -29,7 +29,7 @@ func TestLoadMissingFileGivesEmptyCatalog(t *testing.T) {
 }
 
 func TestSaveLoadRoundTrip(t *testing.T) {
-	file := filepath.Join(t.TempDir(), "sub", "catalog.yaml")
+	file := filepath.Join(t.TempDir(), "sub", "config.yaml")
 	c := sample()
 	c.Enabled = Set{Packs: []string{"acme"}, Skills: []string{"pr"}, Except: []string{"b"}}
 	if err := c.Save(file); err != nil {
@@ -265,7 +265,7 @@ func TestPackMayHoldKnownForeignSkills(t *testing.T) {
 }
 
 func TestExampleCatalogEnablesTheSkilletSkill(t *testing.T) {
-	c, err := Load(filepath.Join("..", "..", "examples", "catalog.yaml"))
+	c, err := Load(filepath.Join("..", "..", "examples", "config.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}

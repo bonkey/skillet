@@ -51,8 +51,7 @@ skillet disable top-design               # one skill of it
 skillet enable -p @craft                 # in this project; writes .skillet.yaml
 skillet run @craft -- claude             # only while the command runs
 
-skillet mcp import                       # take over the servers and presets of mcp-setup
-skillet secret set TAVILY_API_KEY        # the value behind ${TAVILY_API_KEY}
+skillet mcp import                       # copy the servers and presets of mcp-setup, once
 skillet enable @ios mcp:tavily           # a pack's skills and servers, plus one server
 
 skillet list                             # packs and skills with descriptions and state
@@ -88,24 +87,28 @@ skillet enable -p @skillet                    # or only in this project
 skillet run @skillet -- claude                # or only for one session
 ```
 
-On a machine without a catalog, [`examples/catalog.yaml`](examples/catalog.yaml) is a starting
+On a machine without a config, [`examples/config.yaml`](examples/config.yaml) is a starting
 catalog with the skill enabled:
 
 ```sh
 mkdir -p ~/.config/skillet
-curl -fsSL https://raw.githubusercontent.com/bonkey/skillet/main/examples/catalog.yaml \
-    -o ~/.config/skillet/catalog.yaml
+curl -fsSL https://raw.githubusercontent.com/bonkey/skillet/main/examples/config.yaml \
+    -o ~/.config/skillet/config.yaml
 skillet update                                # clones the sources and links what is enabled
 ```
 
 ## Catalog
 
-`~/.config/skillet/catalog.yaml` holds the catalog and the global enabled set:
+`~/.config/skillet/config.yaml` holds everything: the catalog of sources, servers and packs, the
+agents, the 1Password items, and the global enabled set. A `catalog.yaml` from a version below 0.3
+is moved to that name on the first run.
 
 ```yaml
 gist: 0123456789abcdef0123456789abcdef     # written by `gist push`
 includes:                                  # gists merged into this catalog
   - fedcba9876543210fedcba9876543210
+secrets:                                   # 1Password items whose fields fill ${NAME}
+  - { account: my.1password.com, vault: abcdefghij, item: klmnopqrst }
 agents: [claude-code]
 sources:
   wondelai/skills:
@@ -139,16 +142,25 @@ skills; `claude-code`, `codex`, `crush`, `cursor`, `gemini-cli`, `opencode`, `ze
 
 **MCP servers.** A server is written `mcp:name` in commands. Enabled servers go into the user
 config of every agent under `agents` (`~/.claude.json`, `~/.codex/config.toml`, …), in that
-agent's own format. skillet changes and removes only the entries it wrote; an existing entry of the
-same name is adopted when it is identical, and is a conflict otherwise. A server may also carry
+agent's own format. An entry of the same name that is already there is that server: skillet
+overwrites it with the catalog's definition and manages it from then on, so disabling the server,
+or the end of a `run` that brought it, removes the entry. Entries under other names stay untouched. A server may also carry
 `environment`, `headers`, `timeout` (seconds) and `disabled_tools`; an agent gets the ones it
 supports. For crush, skillet writes the legacy `crush.json`, which crush reads next to `crushrc`.
 Servers are global: a project cannot enable them, `skillet run` can.
 
-**Secrets.** Write a secret as `${NAME}` anywhere in a server definition. The values live in
-`~/.config/skillet/secrets.yaml`, readable by you only, and never reach the catalog or its gist.
-They are filled in when an agent's config is written, so the agent configs hold the real values. A
-server with an unknown `${NAME}` is left as it is and reported.
+**Secrets.** Write a secret as `${NAME}` anywhere in a server definition. Its value is the field
+labelled `NAME` of a 1Password item listed under `secrets` by account, vault and item id (the `h`,
+`v` and `i` of the item's private link); with several items, the first that has the field wins. A
+`NAME: value` line in `~/.config/skillet/secrets.yaml`, a file you keep yourself and that is never
+pushed, overrides 1Password. Values are filled in when an agent's config is written, so the agent
+configs hold the real values and the catalog never does. `skillet mcp import` copies definitions as
+they are: replace the keys it brought along with `${NAME}` before pushing the catalog.
+
+skillet reads 1Password through the `op` CLI, one call per item, and only when an entry has to be
+written: it remembers a hash of every entry it wrote, so a sync that changes nothing asks for
+nothing. A server whose `${NAME}` has no value, or whose item cannot be read, is left as it is and
+reported. The `secrets` list of an included gist is ignored.
 
 **Versions.** All skills of a source share its `ref`. `update` moves a branch forward. A tag or a
 commit keeps the source at the version you evaluated. `skillet sources` shows the commit each

@@ -18,7 +18,7 @@ func withMCPs() *Catalog {
 }
 
 func TestMCPRoundTrip(t *testing.T) {
-	file := filepath.Join(t.TempDir(), "catalog.yaml")
+	file := filepath.Join(t.TempDir(), "config.yaml")
 	c := withMCPs()
 	c.Enabled = Set{Packs: []string{"acme"}, MCPs: []string{"tavily"}, Except: []string{"mcp:simctl"}}
 	if err := c.Save(file); err != nil {

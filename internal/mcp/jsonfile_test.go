@@ -119,3 +119,12 @@ func TestJSONRemoveLastKeepsValidity(t *testing.T) {
 		t.Fatalf("invalid after removing the last entry: %v\n%s", err, got)
 	}
 }
+
+func TestJSONKeepsURLsReadable(t *testing.T) {
+	got := edit(t, "{}", func(f *jsonFile) {
+		f.set([]string{"mcpServers"}, "x", Entry{{"url", "https://x/mcp?a=1&b=<2>"}})
+	})
+	if !strings.Contains(got, `"url": "https://x/mcp?a=1&b=<2>"`) {
+		t.Errorf("got:\n%s", got)
+	}
+}

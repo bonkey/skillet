@@ -105,7 +105,7 @@ func TestAddEnableDisableRemove(t *testing.T) {
 	}
 
 	// The catalog file holds names only; a reopened app sees the same state.
-	raw, _ := os.ReadFile(e.p.CatalogFile())
+	raw, _ := os.ReadFile(e.p.ConfigFile())
 	if strings.Contains(string(raw), "The alpha skill") || strings.Contains(string(raw), "skills/alpha") {
 		t.Errorf("catalog leaks skill details:\n%s", raw)
 	}
@@ -200,6 +200,31 @@ func TestViewFilter(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestOpenMovesALegacyConfigFile(t *testing.T) {
+	e := setup(t)
+	e.add(t, true)
+	if err := os.Rename(e.p.ConfigFile(), e.p.LegacyConfigFile()); err != nil {
+		t.Fatal(err)
+	}
+	a, err := Open(e.p)
+	if err != nil || !a.Catalog.HasSkill("alpha") || len(a.Notices) != 1 {
+		t.Fatalf("the legacy file is read under its new name: %v %v", err, a.Notices)
+	}
+	if _, err := os.Stat(e.p.LegacyConfigFile()); !os.IsNotExist(err) {
+		t.Error("the legacy file should be gone")
+	}
+
+	// With both present, the current one counts and the other is left alone.
+	write(t, e.p.LegacyConfigFile(), "agents: [codex]\n")
+	again, err := Open(e.p)
+	if err != nil || !again.Catalog.HasSkill("alpha") || len(again.Notices) != 0 {
+		t.Fatalf("both files: %v %v", err, again.Notices)
+	}
+	if _, err := os.Stat(e.p.LegacyConfigFile()); err != nil {
+		t.Error("a legacy file next to a current one is not touched")
 	}
 }
 
@@ -310,7 +335,7 @@ func TestImport(t *testing.T) {
 	if err != nil || len(dry.Sync.Actions) != 2 {
 		t.Fatalf("dry run: %+v %v", dry, err)
 	}
-	if _, err := os.Stat(e.p.CatalogFile()); !os.IsNotExist(err) {
+	if _, err := os.Stat(e.p.ConfigFile()); !os.IsNotExist(err) {
 		t.Fatal("dry run wrote the catalog")
 	}
 	if data, _ := os.ReadFile(filepath.Join(legacy, "alpha", "SKILL.md")); string(data) != "installed copy\n" {

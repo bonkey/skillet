@@ -46,12 +46,16 @@ type Catalog struct {
 	// Gist is the gist this catalog is pushed to and pulled from.
 	Gist string `yaml:"gist,omitempty"`
 	// Includes lists gists whose catalogs are merged into this one.
-	Includes []string           `yaml:"includes,omitempty"`
-	Agents   []string           `yaml:"agents"`
-	Sources  map[string]*Source `yaml:"sources"`
-	MCPs     map[string]*MCP    `yaml:"mcps,omitempty"`
-	Packs    map[string]*Pack   `yaml:"packs"`
-	Enabled  Set                `yaml:"enabled"`
+	Includes []string `yaml:"includes,omitempty"`
+	// Secrets lists 1Password items whose fields are the values of ${NAME}
+	// placeholders. Only the local catalog's list is used; an included
+	// catalog never chooses where secrets come from.
+	Secrets []SecretItem       `yaml:"secrets,omitempty,flow"`
+	Agents  []string           `yaml:"agents"`
+	Sources map[string]*Source `yaml:"sources"`
+	MCPs    map[string]*MCP    `yaml:"mcps,omitempty"`
+	Packs   map[string]*Pack   `yaml:"packs"`
+	Enabled Set                `yaml:"enabled"`
 
 	// Known widens what a pack may hold beyond this catalog's own skills
 	// and servers, for packs that group entries of included catalogs. It

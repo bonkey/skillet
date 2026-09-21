@@ -10,7 +10,7 @@ const ManifestName = ".skillet.yaml"
 
 type Paths struct {
 	Home   string
-	Config string // directory holding catalog.yaml
+	Config string // directory holding config.yaml and secrets.yaml
 	Data   string // directory holding repos/ and index.json
 	Cwd    string
 }
@@ -40,9 +40,14 @@ func Default() (Paths, error) {
 	}, nil
 }
 
-func (p Paths) CatalogFile() string { return filepath.Join(p.Config, "catalog.yaml") }
-func (p Paths) ReposDir() string    { return filepath.Join(p.Data, "repos") }
-func (p Paths) IndexFile() string   { return filepath.Join(p.Data, "index.json") }
+// ConfigFile holds the catalog, the 1Password items, the agents and the
+// global enabled set.
+func (p Paths) ConfigFile() string { return filepath.Join(p.Config, "config.yaml") }
+
+// LegacyConfigFile is the config file's name in skillet versions below 0.3.
+func (p Paths) LegacyConfigFile() string { return filepath.Join(p.Config, "catalog.yaml") }
+func (p Paths) ReposDir() string         { return filepath.Join(p.Data, "repos") }
+func (p Paths) IndexFile() string        { return filepath.Join(p.Data, "index.json") }
 
 // SecretsFile holds the values of ${NAME} placeholders. It is never pushed.
 func (p Paths) SecretsFile() string { return filepath.Join(p.Config, "secrets.yaml") }

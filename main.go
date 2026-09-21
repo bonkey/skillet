@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,7 +15,6 @@ import (
 	"github.com/bonkey/skillet/internal/app"
 	"github.com/bonkey/skillet/internal/catalog"
 	"github.com/bonkey/skillet/internal/paths"
-	"github.com/bonkey/skillet/internal/secrets"
 	"github.com/bonkey/skillet/internal/tui"
 )
 
@@ -52,6 +50,9 @@ func open() (*app.App, error) {
 	a, err := app.Open(p)
 	if err == nil {
 		a.Force = force
+		for _, notice := range a.Notices {
+			fmt.Fprintln(os.Stderr, "note:", tilde(notice))
+		}
 		for _, warning := range a.Warnings {
 			fmt.Fprintln(os.Stderr, "warning:", warning)
 		}
@@ -85,7 +86,7 @@ In arguments, "@name" is a pack and a bare name is a skill.`,
 	cmd.PersistentFlags().BoolVar(&force, "force", false,
 		"delete files, folders and links that stand where an enabled skill goes, and link the skill")
 	cmd.AddCommand(importCmd(), addCmd(), removeCmd(), packCmd(), toggleCmd(true), toggleCmd(false),
-		syncCmd(), listCmd(), updateCmd(), runCmd(), sourcesCmd(), refCmd(), gistCmd(), mcpCmd(), secretCmd())
+		syncCmd(), listCmd(), updateCmd(), runCmd(), sourcesCmd(), refCmd(), gistCmd(), mcpCmd())
 	return cmd
 }
 
@@ -122,8 +123,8 @@ func printSync(report app.SyncReport) {
 		fmt.Println(tilde(action.String()))
 	}
 	for _, name := range sortedKeys(report.MissingSecrets) {
-		fmt.Printf("missing-secret mcp:%s is left as it is: no value for %s; set it with `skillet secret set <NAME>`\n",
-			name, strings.Join(report.MissingSecrets[name], ", "))
+		fmt.Printf("missing-secret mcp:%s is left as it is: no value for %s in the 1Password items or in %s\n",
+			name, strings.Join(report.MissingSecrets[name], ", "), "secrets.yaml")
 	}
 	for _, note := range report.Notes {
 		fmt.Println("note    ", note)
@@ -695,7 +696,7 @@ so gists that include each other do no harm.`,
 	cmd.AddCommand(push,
 		&cobra.Command{
 			Use:   "pull [<gist>]",
-			Short: "Replace the catalog with the one in a gist; the replaced file is saved as catalog.yaml.bak",
+			Short: "Replace the catalog with the one in a gist; the replaced file is saved as config.yaml.bak",
 			Args:  cobra.MaximumNArgs(1),
 			RunE: act(func(a *app.App, args []string) (string, error) {
 				return a.Pull(strings.Join(args, ""))
@@ -757,25 +758,21 @@ skills. Enable and disable them like skills, written "mcp:<name>":
   skillet run @ios -- claude
 
 Enabled servers are written into the user configs of the agents listed under
-"agents": claude-code, codex, crush, cursor, gemini-cli, opencode, zed.
-skillet changes and removes only the entries it wrote. Servers exist in the
-global scope and in "run" sessions, not in projects.`,
+"agents": claude-code, codex, crush, cursor, gemini-cli, opencode, zed. An
+existing entry of the same name is overwritten and managed from then on;
+entries under other names stay untouched. Servers exist in the global scope
+and in "run" sessions, not in projects.`,
 	}
-	var dryRun, adopt bool
 	imp := &cobra.Command{
 		Use:   "import [file]",
-		Short: "Take over the servers and presets of an mcp-setup config",
-		Long: `Take over the servers and presets of an mcp-setup config
+		Short: "Copy the servers and presets of an mcp-setup config into the catalog",
+		Long: `Copy the servers and presets of an mcp-setup config into the catalog
 (default ~/.config/mcp-setup/config.json).
 
-Definitions become catalog servers and presets become packs. Secret values
-move to the secrets file and leave ${NAME} placeholders in the catalog.
-Nothing becomes enabled and no agent config changes. Enabling a server later
-adopts an identical existing entry and reports a differing one as a conflict.
-
-With --adopt, the entries that agents already hold under an imported name
-are handed to skillet at once: those that are not enabled are removed. Check
-with --dry-run first.`,
+Definitions become catalog servers and presets become packs, as they are.
+Nothing becomes enabled and no agent config changes. Keys that the
+definitions contain are copied too: replace them with ${NAME} in
+config.yaml before pushing the catalog.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := open()
@@ -786,124 +783,23 @@ with --dry-run first.`,
 			if len(args) == 1 {
 				file = args[0]
 			}
-			report, err := a.ImportMCP(file, dryRun, adopt)
+			report, err := a.ImportMCP(file)
 			if err != nil {
 				return err
 			}
-			printSync(report.Sync)
 			for _, name := range sortedKeys(report.Skipped) {
 				fmt.Printf("skipped  %s: %s\n", name, report.Skipped[name])
 			}
-			if len(report.OtherAgents) > 0 {
-				fmt.Printf("note     %s also hold imported servers; add them to `agents:` in the catalog to manage them\n",
-					strings.Join(report.OtherAgents, ", "))
+			fmt.Printf("imported %d servers and %d packs\n", len(report.Servers), len(report.Packs))
+			if len(report.Servers) > 0 {
+				fmt.Println("note     definitions were copied as they are: replace keys with ${NAME} in " +
+					tilde(a.Paths.ConfigFile()) + " before `skillet gist push`")
 			}
-			verb := "imported"
-			if dryRun {
-				verb = "would import"
-			}
-			fmt.Printf("%s %d servers and %d packs, moved %d secrets (%s)\n", verb,
-				len(report.Servers), len(report.Packs), len(report.Secrets), strings.Join(report.Secrets, ", "))
 			return nil
 		},
 	}
-	imp.Flags().BoolVar(&dryRun, "dry-run", false, "report only; write no catalog, secrets or agent config")
-	imp.Flags().BoolVar(&adopt, "adopt", false, "hand existing agent entries of the imported servers to skillet")
 	cmd.AddCommand(imp)
 	return cmd
-}
-
-func secretCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "secret",
-		Short: "Manage the values behind ${NAME} placeholders",
-		Long: `Manage the values behind ${NAME} placeholders.
-
-Server definitions in the catalog refer to secrets as ${NAME}. The values
-live in ~/.config/skillet/secrets.yaml, readable by you only, and are never
-part of a pushed catalog. They are filled in when skillet writes an agent's
-config.`,
-	}
-	withStore := func(fn func(store secrets.Store, args []string) (save bool, err error)) func(*cobra.Command, []string) error {
-		return func(cmd *cobra.Command, args []string) error {
-			a, err := open()
-			if err != nil {
-				return err
-			}
-			store, err := secrets.Load(a.Paths.SecretsFile())
-			if err != nil {
-				return err
-			}
-			save, err := fn(store, args)
-			if err != nil || !save {
-				return err
-			}
-			if err := store.Save(a.Paths.SecretsFile()); err != nil {
-				return err
-			}
-			report, err := a.Sync(a.Global(), app.SyncOptions{})
-			printSync(report)
-			return err
-		}
-	}
-	cmd.AddCommand(
-		&cobra.Command{
-			Use:   "set <NAME>",
-			Short: "Set a secret; the value is read from the terminal without echo, or from standard input",
-			Args:  cobra.ExactArgs(1),
-			RunE: withStore(func(store secrets.Store, args []string) (bool, error) {
-				value, err := readSecret(args[0])
-				if err != nil {
-					return false, err
-				}
-				return true, store.Set(args[0], value)
-			}),
-		},
-		&cobra.Command{
-			Use:   "list",
-			Short: "List the names of the stored secrets",
-			Args:  cobra.NoArgs,
-			RunE: withStore(func(store secrets.Store, args []string) (bool, error) {
-				for _, name := range store.Names() {
-					fmt.Println(name)
-				}
-				return false, nil
-			}),
-		},
-		&cobra.Command{
-			Use:   "rm <NAME>...",
-			Short: "Delete secrets",
-			Args:  cobra.MinimumNArgs(1),
-			RunE: withStore(func(store secrets.Store, args []string) (bool, error) {
-				for _, name := range args {
-					if _, ok := store[name]; !ok {
-						return false, fmt.Errorf("no secret %q", name)
-					}
-					delete(store, name)
-				}
-				return true, nil
-			}),
-		})
-	return cmd
-}
-
-// readSecret reads a value without echo from a terminal, or the first line
-// of standard input otherwise.
-func readSecret(name string) (string, error) {
-	if term.IsTerminal(int(os.Stdin.Fd())) {
-		fmt.Fprintf(os.Stderr, "value for %s: ", name)
-		value, err := term.ReadPassword(int(os.Stdin.Fd()))
-		fmt.Fprintln(os.Stderr)
-		return strings.TrimSpace(string(value)), err
-	}
-	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
-	if err != nil && line == "" {
-		return "", err
-	}
-	if value := strings.TrimSpace(line); value != "" {
-		return value, nil
-	}
-	return "", errors.New("the value is empty")
 }
 
 func sortedKeys[V any](m map[string]V) []string {

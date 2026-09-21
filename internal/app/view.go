@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/bonkey/skillet/internal/secrets"
 )
 
 // NoPack groups the skills that belong to no pack.
@@ -80,7 +82,7 @@ func (a *App) View() (View, error) {
 			loose = append(loose, name)
 		}
 	}
-	store, err := a.secrets()
+	store, err := secrets.Load(a.Paths.SecretsFile())
 	if err != nil {
 		return view, err
 	}
@@ -88,7 +90,12 @@ func (a *App) View() (View, error) {
 	var looseMCPs []string
 	for _, name := range a.Catalog.MCPNames() {
 		def := a.Catalog.MCPs[name]
-		_, missing := expandMCP(*def, store)
+		// With 1Password items configured, a name outside the local store may
+		// still resolve, and a listing does not read items to find out.
+		var missing []string
+		if len(a.Local.Secrets) == 0 {
+			_, missing = expandMCP(*def, store.Expand)
+		}
 		server := MCPView{
 			Name: name, Type: def.Type, Target: def.URL, Packs: a.Catalog.MCPPacksOf(name),
 			Global: slices.Contains(enabledMCPs, name), MissingSecrets: missing, From: a.Catalog.MCPOrigin[name],
