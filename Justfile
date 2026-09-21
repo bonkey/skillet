@@ -30,7 +30,9 @@ dist VERSION:
         CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath \
             -ldflags "-s -w -X main.version=v{{VERSION}}" -o "dist/$name/skillet" .
         cp README.md "dist/$name/"
-        tar -C dist -czf "dist/$name.tar.gz" "$name"
+        # The binary sits at the archive root, where mise's github backend looks for it.
+        # COPYFILE_DISABLE keeps macOS tar from adding ._* metadata files.
+        COPYFILE_DISABLE=1 tar -C "dist/$name" -czf "dist/$name.tar.gz" skillet README.md
         rm -rf "dist/$name"
     done
     (cd dist && shasum -a 256 *.tar.gz > checksums.txt)

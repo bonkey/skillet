@@ -107,4 +107,4 @@ this to the session it is running in; suggest the command to the user.
 | `unknown skill "<name>"` or `unknown pack "<name>"` | The name is not in the catalog. | Check `skillet list --json`. If the skill is not there, `skillet add <owner/repo>` lists what a source offers; adding is the user's call. |
 | `the home directory cannot be a project` | `-p` was used in `~`. | Use the global scope, or change to the project directory. |
 | `warning: gist …` | An included gist could not be reached; its cached copy is in use. | Carry on. Mention it if the user expected fresh data. |
-| `skillet: command not found` | skillet is not installed. | Ask the user to install it: `mise use -g ubi:bonkey/skillet` or `go install github.com/bonkey/skillet@latest`. |
+| `skillet: command not found` | skillet is not installed. | Ask the user to install it: `mise use -g github:bonkey/skillet` or `go install github.com/bonkey/skillet@latest`. |

@@ -22,11 +22,12 @@ a commit. `skillet import` takes over an existing `npx skills` install.
 ## Install
 
 ```sh
-mise use -g ubi:bonkey/skillet               # release binary, through mise
+mise use -g github:bonkey/skillet            # release binary, through mise
 go install github.com/bonkey/skillet@latest  # from source, with Go
 ```
 
-Pin a version with `ubi:bonkey/skillet@0.1.0`. Archives for macOS and Linux are attached to each
+Pin a version with `github:bonkey/skillet@0.1.2`. mise caches the release list for an hour:
+`mise cache clear` makes a release from the last hour visible. Archives for macOS and Linux are attached to each
 [release](https://github.com/bonkey/skillet/releases). skillet needs `git`, and the `gh` CLI for
 the gist commands.
 
