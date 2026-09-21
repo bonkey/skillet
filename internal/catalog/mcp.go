@@ -13,22 +13,22 @@ const MCPPrefix = "mcp:"
 
 // SecretItem names a 1Password item.
 type SecretItem struct {
-	Account string `yaml:"account"` // sign-in address or account id
-	Vault   string `yaml:"vault"`
-	Item    string `yaml:"item"`
+	Account string `toml:"account"` // sign-in address or account id
+	Vault   string `toml:"vault"`
+	Item    string `toml:"item"`
 }
 
 // MCP defines one MCP server. String fields may hold ${NAME} placeholders
 // for secrets.
 type MCP struct {
-	Type          string            `yaml:"type"` // "local" or "remote"
-	Command       []string          `yaml:"command,omitempty,flow"`
-	URL           string            `yaml:"url,omitempty"`
-	Transport     string            `yaml:"transport,omitempty"` // "http" (default) or "sse", for remote servers
-	Environment   map[string]string `yaml:"environment,omitempty"`
-	Headers       map[string]string `yaml:"headers,omitempty"`
-	Timeout       float64           `yaml:"timeout,omitempty"` // seconds
-	DisabledTools []string          `yaml:"disabled_tools,omitempty,flow"`
+	Type          string            `toml:"type"` // "local" or "remote"
+	Command       []string          `toml:"command,omitempty"`
+	URL           string            `toml:"url,omitempty"`
+	Transport     string            `toml:"transport,omitempty"` // "http" (default) or "sse", for remote servers
+	Environment   map[string]string `toml:"environment,omitempty"`
+	Headers       map[string]string `toml:"headers,omitempty"`
+	Timeout       float64           `toml:"timeout,omitempty"` // seconds
+	DisabledTools []string          `toml:"disabled_tools,omitempty"`
 }
 
 func (m *MCP) Validate(name string) error {

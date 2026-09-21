@@ -19,7 +19,7 @@ symlinks. `README.md` describes the behaviour; keep it short and focused on the 
 - `internal/app` — every operation; the CLI and the TUI both call it
 - `internal/tui` — Bubble Tea front end; view state only
 - `skills/skillet/SKILL.md` — the skill that teaches agents to enable and disable skills with the CLI
-- `examples/config.yaml` — a starting catalog with that skill enabled; a test loads it
+- `examples/config.toml` — a starting catalog with that skill enabled; a test loads it
 
 `App.Local` is the catalog that is edited and saved. `App.Catalog` is `Local` merged with the
 included gists, and is what everything reads. Change `Local`, then call `Save`.

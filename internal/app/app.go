@@ -40,7 +40,6 @@ type App struct {
 
 	LastSync SyncReport
 
-	Notices  []string   // one-time remarks from opening the config
 	Included []Included // the included gists, flattened in merge order
 	Warnings []string   // problems with included gists
 }
@@ -48,34 +47,15 @@ type App struct {
 func Open(p paths.Paths) (*App, error) { return OpenWith(p, gist.GH{}) }
 
 func OpenWith(p paths.Paths, client gist.Client) (*App, error) {
-	moved, err := adoptLegacyConfig(p)
-	if err != nil {
-		return nil, err
-	}
 	local, err := catalog.Load(p.ConfigFile())
 	if err != nil {
 		return nil, err
 	}
 	a := &App{Paths: p, Local: local, Gists: client, OnePassword: secrets.OP{}}
-	if moved {
-		a.Notices = append(a.Notices, fmt.Sprintf("moved %s to %s", p.LegacyConfigFile(), p.ConfigFile()))
-	}
 	if err := a.reload(false); err != nil {
 		return nil, err
 	}
 	return a, a.Reindex()
-}
-
-// adoptLegacyConfig moves a config file that has the legacy name, when no
-// file of the current name exists.
-func adoptLegacyConfig(p paths.Paths) (bool, error) {
-	if _, err := os.Stat(p.ConfigFile()); !os.IsNotExist(err) {
-		return false, nil
-	}
-	if _, err := os.Stat(p.LegacyConfigFile()); err != nil {
-		return false, nil
-	}
-	return true, os.Rename(p.LegacyConfigFile(), p.ConfigFile())
 }
 
 // Save writes the local catalog and rebuilds the merged one.
@@ -89,7 +69,22 @@ func (a *App) Save() error {
 func (a *App) Reindex() error {
 	idx, err := source.LoadIndex(a.Paths, a.Catalog)
 	a.Index = idx
+	a.expand()
 	return err
+}
+
+// expand gives the sources that take all skills the names their clones offer.
+func (a *App) expand() {
+	if a.Index == nil {
+		return
+	}
+	offered := map[string][]string{}
+	for name, indexed := range a.Index.Sources {
+		for skill := range indexed.Skills {
+			offered[name] = append(offered[name], skill)
+		}
+	}
+	a.Catalog.ExpandAll(offered)
 }
 
 // Scope is where skills get enabled: globally, or in one project.
@@ -393,10 +388,13 @@ func (a *App) DropUnusedClone(name string) {
 
 type AddRequest struct {
 	Source, URL, Ref string
-	Skills           []string
-	Pack             string // optional pack to put the skills in
-	PackDescription  string // needed when Pack does not exist yet
-	Enable           bool
+	// All takes every skill the source offers, also those it gains later.
+	// Skills then names what it offers today.
+	All             bool
+	Skills          []string
+	Pack            string // optional pack to put the skills in
+	PackDescription string // needed when Pack does not exist yet
+	Enable          bool
 }
 
 // Add records skills of an already fetched source in the local catalog.
@@ -406,7 +404,11 @@ func (a *App) Add(req AddRequest) error {
 			return fmt.Errorf("pack %q is new and needs a description", req.Pack)
 		}
 	}
-	if err := a.Local.AddSkills(req.Source, req.URL, req.Ref, req.Skills); err != nil {
+	members := req.Skills
+	if req.All {
+		a.Local.AddSource(req.Source, req.URL, req.Ref)
+		members = []string{req.Source}
+	} else if err := a.Local.AddSkills(req.Source, req.URL, req.Ref, req.Skills); err != nil {
 		return err
 	}
 	if req.Pack != "" {
@@ -415,16 +417,21 @@ func (a *App) Add(req AddRequest) error {
 				return err
 			}
 		}
-		if err := a.Local.PackAdd(req.Pack, req.Skills); err != nil {
+		if err := a.Local.PackAdd(req.Pack, members); err != nil {
 			return err
 		}
 	}
-	if req.Enable {
-		if err := a.Local.Enable(&a.Local.Enabled, req.Skills...); err != nil {
-			return err
-		}
+	if err := a.saveAndSync(); err != nil || !req.Enable {
+		return err
 	}
-	return a.saveAndSync()
+	// A whole source in a pack is enabled through the pack, so that the
+	// skills it gains later are enabled too.
+	names := req.Skills
+	if req.All && req.Pack != "" {
+		names = []string{"@" + req.Pack}
+	}
+	_, err := a.Toggle(a.Global(), true, names...)
+	return err
 }
 
 // saveAndSync persists a change of the local catalog and brings the index
@@ -449,11 +456,13 @@ func (a *App) EditPack(name string, create bool, edit func(local *catalog.Catalo
 			return fmt.Errorf("pack %q comes from gist %s; create a pack of the same name to override it", name, from)
 		}
 	}
-	a.Local.Known = func(member string) bool {
+	a.Local.Lookup = func(member string) (string, bool) {
 		if server, ok := strings.CutPrefix(member, catalog.MCPPrefix); ok {
-			return a.Catalog.MCPs[server] != nil
+			return member, a.Catalog.MCPs[server] != nil
 		}
-		return a.Catalog.HasSkill(member)
+		skill, source := catalog.SplitRef(member)
+		owner, ok := a.Catalog.SourceOf(skill)
+		return skill + "@" + owner, ok && (source == "" || source == owner)
 	}
 	if err := edit(a.Local); err != nil {
 		return err
@@ -461,11 +470,20 @@ func (a *App) EditPack(name string, create bool, edit func(local *catalog.Catalo
 	return a.saveAndSync()
 }
 
-// Remove deletes skills and servers ("mcp:name") from the local catalog.
-// "@pack" deletes the pack together with its skills and servers. Entries of included gists cannot be removed.
+// ownsAll reports whether a skill belongs to a local source that takes all
+// the skills it offers.
+func (a *App) ownsAll(skill string) bool {
+	owner, _ := a.Catalog.SourceOf(skill)
+	src := a.Local.Sources[owner]
+	return src != nil && len(src.Skills) == 0
+}
+
+// Remove deletes skills, servers ("mcp:name") and sources ("owner/repo")
+// from the local catalog. "@pack" deletes the pack together with its
+// skills, servers and sources. Entries of included gists cannot be removed.
 // Clones of sources the catalog does not list are deleted.
 func (a *App) Remove(names ...string) (SyncReport, error) {
-	var skills, servers []string
+	var skills, servers, sources []string
 	for _, name := range names {
 		pack, isPack := strings.CutPrefix(name, "@")
 		server, isMCP := strings.CutPrefix(name, catalog.MCPPrefix)
@@ -476,8 +494,10 @@ func (a *App) Remove(names ...string) (SyncReport, error) {
 			return SyncReport{}, fmt.Errorf("mcp server %q comes from gist %s and cannot be removed here; disable it instead", server, a.Catalog.MCPOrigin[server])
 		case isMCP:
 			return SyncReport{}, fmt.Errorf("unknown mcp server %q", server)
+		case a.Local.Sources[name] != nil:
+			sources = append(sources, name)
 		case isPack && a.Local.Packs[pack] != nil:
-			for _, skill := range a.Local.Packs[pack].Skills {
+			for _, skill := range a.Local.PackSkills(pack) {
 				if a.Local.HasSkill(skill) {
 					skills = append(skills, skill)
 				}
@@ -487,10 +507,18 @@ func (a *App) Remove(names ...string) (SyncReport, error) {
 					servers = append(servers, server)
 				}
 			}
+			for _, src := range a.Local.Packs[pack].Sources {
+				if a.Local.Sources[src] != nil {
+					sources = append(sources, src)
+				}
+			}
 		case !isPack && a.Local.HasSkill(name):
 			skills = append(skills, name)
 		case isPack && a.Catalog.Packs[pack] != nil:
 			return SyncReport{}, fmt.Errorf("pack %q comes from gist %s and cannot be removed here", pack, a.Catalog.PackOrigin[pack])
+		case !isPack && a.Catalog.HasSkill(name) && a.ownsAll(name):
+			owner, _ := a.Catalog.SourceOf(name)
+			return SyncReport{}, fmt.Errorf("skill %q comes with all of %s; disable it, or remove the source", name, owner)
 		case !isPack && a.Catalog.HasSkill(name):
 			return SyncReport{}, fmt.Errorf("skill %q comes from gist %s and cannot be removed here; disable it instead", name, a.Catalog.SkillOrigin[name])
 		default:
@@ -503,6 +531,9 @@ func (a *App) Remove(names ...string) (SyncReport, error) {
 	}
 	for _, server := range servers {
 		a.Local.RemoveMCP(server)
+	}
+	for _, src := range sources {
+		a.Local.RemoveSource(src)
 	}
 	for _, name := range names {
 		if pack, ok := strings.CutPrefix(name, "@"); ok {

@@ -50,9 +50,6 @@ func open() (*app.App, error) {
 	a, err := app.Open(p)
 	if err == nil {
 		a.Force = force
-		for _, notice := range a.Notices {
-			fmt.Fprintln(os.Stderr, "note:", tilde(notice))
-		}
 		for _, warning := range a.Warnings {
 			fmt.Fprintln(os.Stderr, "warning:", warning)
 		}
@@ -67,7 +64,8 @@ func root() *cobra.Command {
 		Long: `A local catalog of agent skills, enabled per scope with symlinks.
 
 Without a command, skillet opens the TUI.
-In arguments, "@name" is a pack and a bare name is a skill.`,
+In arguments, "@name" is a pack, "mcp:name" is an MCP server, and a bare name
+or "name@owner/repo" is a skill.`,
 		Version:       buildVersion(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -124,7 +122,7 @@ func printSync(report app.SyncReport) {
 	}
 	for _, name := range sortedKeys(report.MissingSecrets) {
 		fmt.Printf("missing-secret mcp:%s is left as it is: no value for %s in the 1Password items or in %s\n",
-			name, strings.Join(report.MissingSecrets[name], ", "), "secrets.yaml")
+			name, strings.Join(report.MissingSecrets[name], ", "), "secrets.toml")
 	}
 	for _, note := range report.Notes {
 		fmt.Println("note    ", note)
@@ -213,7 +211,7 @@ func addCmd() *cobra.Command {
 					return fmt.Errorf("%s has no skill %q", name, skill)
 				}
 			}
-			err = a.Add(app.AddRequest{Source: name, URL: url, Ref: ref, Skills: skills,
+			err = a.Add(app.AddRequest{Source: name, URL: url, Ref: ref, All: all, Skills: skills,
 				Pack: pack, PackDescription: packDescription, Enable: enable})
 			if err != nil {
 				a.DropUnusedClone(name)
@@ -224,7 +222,7 @@ func addCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringSliceVarP(&skills, "skill", "s", nil, "skills to add (repeatable, comma separated)")
-	cmd.Flags().BoolVar(&all, "all", false, "add every skill of the source")
+	cmd.Flags().BoolVar(&all, "all", false, "take every skill the source offers, also those it gains later")
 	cmd.Flags().StringVar(&pack, "pack", "", "put the skills in this pack")
 	cmd.Flags().StringVar(&packDescription, "pack-description", "", "description for --pack when the pack is new")
 	cmd.Flags().StringVar(&ref, "ref", "", "branch or tag to track (default: the default branch)")
@@ -234,31 +232,20 @@ func addCmd() *cobra.Command {
 }
 
 func removeCmd() *cobra.Command {
-	var source string
 	cmd := &cobra.Command{
-		Use:   "remove <skill|@pack>...",
-		Short: "Remove skills from the catalog; @pack removes the pack and its skills",
+		Use:   "remove <skill|mcp:server|owner/repo|@pack>...",
+		Short: "Remove skills, servers or whole sources from the catalog; @pack removes the pack and what it holds",
+		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := open()
 			if err != nil {
 				return err
-			}
-			if source != "" {
-				src, ok := a.Catalog.Sources[source]
-				if !ok {
-					return fmt.Errorf("unknown source %q", source)
-				}
-				args = append(args, src.Skills...)
-			}
-			if len(args) == 0 {
-				return errors.New("nothing to remove")
 			}
 			report, err := a.Remove(args...)
 			printSync(report)
 			return err
 		},
 	}
-	cmd.Flags().StringVar(&source, "source", "", "remove every skill of this source")
 	return cmd
 }
 
@@ -287,14 +274,14 @@ func packCmd() *cobra.Command {
 
 	cmd.AddCommand(create,
 		&cobra.Command{
-			Use:   "add <pack> <skill>...",
-			Short: "Add skills to a pack",
+			Use:   "add <pack> <skill|mcp:server|owner/repo>...",
+			Short: "Add skills, servers or whole sources to a pack",
 			Args:  cobra.MinimumNArgs(2),
 			RunE:  edit(func(local *catalog.Catalog, args []string) error { return local.PackAdd(args[0], args[1:]) }),
 		},
 		&cobra.Command{
-			Use:   "rm <pack> [skill...]",
-			Short: "Take skills out of a pack; without skills, delete the pack and keep its skills",
+			Use:   "rm <pack> [skill|mcp:server|owner/repo...]",
+			Short: "Take members out of a pack; without members, delete the pack and keep its skills",
 			Args:  cobra.MinimumNArgs(1),
 			RunE: edit(func(local *catalog.Catalog, args []string) error {
 				if len(args) > 1 {
@@ -696,7 +683,7 @@ so gists that include each other do no harm.`,
 	cmd.AddCommand(push,
 		&cobra.Command{
 			Use:   "pull [<gist>]",
-			Short: "Replace the catalog with the one in a gist; the replaced file is saved as config.yaml.bak",
+			Short: "Replace the catalog with the one in a gist; the replaced file is saved as config.toml.bak",
 			Args:  cobra.MaximumNArgs(1),
 			RunE: act(func(a *app.App, args []string) (string, error) {
 				return a.Pull(strings.Join(args, ""))
@@ -763,42 +750,6 @@ existing entry of the same name is overwritten and managed from then on;
 entries under other names stay untouched. Servers exist in the global scope
 and in "run" sessions, not in projects.`,
 	}
-	imp := &cobra.Command{
-		Use:   "import [file]",
-		Short: "Copy the servers and presets of an mcp-setup config into the catalog",
-		Long: `Copy the servers and presets of an mcp-setup config into the catalog
-(default ~/.config/mcp-setup/config.json).
-
-Definitions become catalog servers and presets become packs, as they are.
-Nothing becomes enabled and no agent config changes. Keys that the
-definitions contain are copied too: replace them with ${NAME} in
-config.yaml before pushing the catalog.`,
-		Args: cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			a, err := open()
-			if err != nil {
-				return err
-			}
-			file := a.MCPSetupConfig()
-			if len(args) == 1 {
-				file = args[0]
-			}
-			report, err := a.ImportMCP(file)
-			if err != nil {
-				return err
-			}
-			for _, name := range sortedKeys(report.Skipped) {
-				fmt.Printf("skipped  %s: %s\n", name, report.Skipped[name])
-			}
-			fmt.Printf("imported %d servers and %d packs\n", len(report.Servers), len(report.Packs))
-			if len(report.Servers) > 0 {
-				fmt.Println("note     definitions were copied as they are: replace keys with ${NAME} in " +
-					tilde(a.Paths.ConfigFile()) + " before `skillet gist push`")
-			}
-			return nil
-		},
-	}
-	cmd.AddCommand(imp)
 	return cmd
 }
 

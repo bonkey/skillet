@@ -9,7 +9,7 @@ import (
 	"os"
 	"regexp"
 
-	"gopkg.in/yaml.v3"
+	"github.com/pelletier/go-toml/v2"
 )
 
 type Store map[string]string
@@ -25,7 +25,7 @@ func Load(file string) (Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := yaml.Unmarshal(data, &store); err != nil {
+	if err := toml.Unmarshal(data, &store); err != nil {
 		return nil, fmt.Errorf("%s: %w", file, err)
 	}
 	return store, nil

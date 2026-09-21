@@ -12,12 +12,9 @@ separates the two. The catalog keeps everything you trust; a session loads only 
 | --- | --- | --- |
 | Skills you keep but do not load | remove them, find them again later | stay in the catalog, disabled |
 | Switching on and off | reinstall over the network | one command or one key, offline |
-| Packs | built in a web UI, stored in a Vercel account | a few lines of local YAML with a description, toggled as a unit |
+| Packs | built in a web UI, stored in a Vercel account | a few lines of local TOML, skills and MCP servers together |
 | Scope | global or project | global, project, or one command: `skillet run @ios -- claude` |
 | Moving to another machine, sharing | a pack URL, or a lock file per project | the whole catalog in a gist, which can include other people's gists |
-
-A TUI shows every skill with its description and state, and each source tracks a branch, a tag or
-a commit. `skillet import` takes over an existing `npx skills` install.
 
 ## Install
 
@@ -26,18 +23,18 @@ mise use -g github:bonkey/skillet            # release binary, through mise
 go install github.com/bonkey/skillet@latest  # from source, with Go
 ```
 
-Pin a version with `github:bonkey/skillet@0.1.2`. mise caches the release list for an hour:
-`mise cache clear` makes a release from the last hour visible. Archives for macOS and Linux are attached to each
-[release](https://github.com/bonkey/skillet/releases). skillet needs `git`, and the `gh` CLI for
-the gist commands.
+skillet needs `git`; the gist commands need the `gh` CLI, and 1Password secrets the `op` CLI.
+Archives for macOS and Linux are attached to each
+[release](https://github.com/bonkey/skillet/releases).
 
 ## Main uses
 
-In commands, `@name` is a pack and a bare name is a skill. `-p` acts on the project around the
-working directory; the default is the global scope. `skillet <command> --help` lists every flag.
+In commands, `@name` is a pack, `mcp:name` is an MCP server, and a bare name is a skill. `-p` acts
+on the project around the working directory; the default is the global scope.
+`skillet <command> --help` lists every flag.
 
 ```sh
-skillet                                  # TUI: browse, toggle, add, remove
+skillet                                  # TUI: browse, search, toggle, add, remove
 
 skillet import --dry-run                 # take over an existing `npx skills` install
 skillet import
@@ -45,157 +42,116 @@ skillet import
 skillet add wondelai/skills              # list what a source offers
 skillet add wondelai/skills --skill clean-code,top-design \
     --pack craft --pack-description "Code craft"
+skillet add dietrichgebert/ponytail --all --pack lazy   # the whole source, also what it gains later
 
-skillet enable @craft                    # a whole pack, globally
-skillet disable top-design               # one skill of it
-skillet enable -p @craft                 # in this project; writes .skillet.yaml
+skillet enable @craft                    # a whole pack, globally: its skills and its servers
+skillet disable top-design mcp:simctl    # single members of it
+skillet enable -p @craft                 # in this project; writes .skillet.toml
 skillet run @craft -- claude             # only while the command runs
 
-skillet mcp import                       # copy the servers and presets of mcp-setup, once
-skillet enable @ios mcp:tavily           # a pack's skills and servers, plus one server
-
-skillet list                             # packs and skills with descriptions and state
 skillet list 'swift|ios' --enabled       # search names and descriptions; terms may be regexps
 skillet update                           # fetch all sources, report changed skills
-skillet ref wondelai/skills v2.1         # track a branch, tag, or full commit hash
-skillet gist push                        # store the catalog in a gist
+skillet ref wondelai/skills v2.1         # track a branch, a tag, or a full commit hash
+skillet gist push                        # store the config in a gist
 skillet gist pull <gist>                 # load it on another machine
 skillet gist include <gist>              # merge someone else's catalog into yours
 ```
 
-TUI keys: `space` toggles a skill or a whole pack, `tab` switches between the global and the
-project scope, `/` filters, `a` adds a source, `d` removes, `p` changes pack membership, `e` edits a
-pack description, `r` changes a source's ref, `u` updates, `q` quits.
+`import` reads `~/.agents/.skill-lock.json`, fetches every source, creates one pack per source and
+enables everything. It **deletes** the folder of every imported skill in `~/.agents/skills` and puts
+a link in its place. Folders the lock does not list stay.
 
-`import` reads `~/.agents/.skill-lock.json`. It takes the source and name of each skill from the
-lock, fetches the content from the source, creates one pack per source, and enables everything
-globally. It **deletes** the folder of every imported skill in `~/.agents/skills` and puts a link
-in its place. Folders the lock does not list stay.
+[`skills/skillet`](skills/skillet/SKILL.md) teaches agents to search the catalog before looking for
+skills elsewhere, and to enable and disable what they find:
+`skillet add bonkey/skillet --all --enable`. [`examples/config.toml`](examples/config.toml) is a
+starting config with that skill enabled.
 
-## The skillet skill
+## Config
 
-The repository ships a skill, [`skills/skillet`](skills/skillet/SKILL.md), that teaches agents to
-search the catalog before looking for skills elsewhere, and to enable and disable skills and packs.
-Install it with skillet itself:
+`~/.config/skillet/config.toml` holds everything:
 
-```sh
-skillet add bonkey/skillet --all --enable     # into the catalog, enabled globally
+```toml
+gist = "0123456789abcdef0123456789abcdef"      # written by `gist push`
+includes = ["fedcba9876543210fedcba9876543210"] # gists merged into this catalog
+agents = ["claude-code", "codex", "zed"]
 
-skillet add bonkey/skillet --all \
-    --pack skillet --pack-description "Lets agents manage skills with skillet"
-skillet enable -p @skillet                    # or only in this project
-skillet run @skillet -- claude                # or only for one session
+[[secrets]]                                    # 1Password items whose fields fill ${NAME}
+account = "my.1password.com"
+vault = "abcdefghij"
+item = "klmnopqrst"
+
+[sources."wondelai/skills"]
+url = "https://github.com/wondelai/skills.git"
+ref = "main"                                   # optional: branch, tag, or full commit hash
+skills = ["clean-code", "top-design"]          # optional: without it, every skill the source offers
+
+[sources."dietrichgebert/ponytail"]
+url = "https://github.com/dietrichgebert/ponytail.git"
+
+[mcps.simctl]
+type = "local"
+command = ["npx", "-y", "simctl-mcp"]
+
+[mcps.tavily]
+type = "remote"                                # transport = "sse" for an SSE endpoint
+url = "https://mcp.tavily.com/mcp/?tavilyApiKey=${TAVILY_API_KEY}"
+
+[packs.craft]
+description = "Code craft frameworks"
+sources = ["dietrichgebert/ponytail"]          # every skill of these sources
+skills = ["clean-code@wondelai/skills"]        # plus single skills
+mcps = ["simctl"]                              # plus servers
+
+[enabled]
+packs = ["craft"]                              # everything in these packs
+skills = ["top-design@wondelai/skills"]        # plus these skills
+mcps = ["tavily"]                              # plus these servers
+except = ["mcp:simctl"]                        # minus these
 ```
 
-On a machine without a config, [`examples/config.yaml`](examples/config.yaml) is a starting
-catalog with the skill enabled:
-
-```sh
-mkdir -p ~/.config/skillet
-curl -fsSL https://raw.githubusercontent.com/bonkey/skillet/main/examples/config.yaml \
-    -o ~/.config/skillet/config.yaml
-skillet update                                # clones the sources and links what is enabled
-```
-
-## Catalog
-
-`~/.config/skillet/config.yaml` holds everything: the catalog of sources, servers and packs, the
-agents, the 1Password items, and the global enabled set. A `catalog.yaml` from a version below 0.3
-is moved to that name on the first run.
-
-```yaml
-gist: 0123456789abcdef0123456789abcdef     # written by `gist push`
-includes:                                  # gists merged into this catalog
-  - fedcba9876543210fedcba9876543210
-secrets:                                   # 1Password items whose fields fill ${NAME}
-  - { account: my.1password.com, vault: abcdefghij, item: klmnopqrst }
-agents: [claude-code]
-sources:
-  wondelai/skills:
-    url: https://github.com/wondelai/skills.git
-    ref: main            # optional: branch, tag, or full commit hash
-    skills: [clean-code, top-design]
-mcps:
-  simctl:
-    type: local
-    command: [npx, -y, simctl-mcp]
-  tavily:
-    type: remote         # transport: sse for an SSE endpoint
-    url: https://mcp.tavily.com/mcp/?tavilyApiKey=${TAVILY_API_KEY}
-packs:
-  craft:
-    description: Code craft frameworks
-    skills: [clean-code]
-    mcps: [simctl]
-enabled:
-  packs: [craft]         # every skill and server of these packs
-  skills: [top-design]   # plus these skills
-  mcps: [tavily]         # plus these servers
-  except: [mcp:simctl]   # minus these
-```
-
-A project keeps its own `packs`, `skills`, and `except` in `.skillet.yaml` at its root. Project
-skills add to the global ones.
-
-Agents: `claude-code`, `codex`, `cursor`, `gemini-cli`, `github-copilot`, `opencode`, `pi` for
-skills; `claude-code`, `codex`, `crush`, `cursor`, `gemini-cli`, `opencode`, `zed` for MCP servers.
-
-**MCP servers.** A server is written `mcp:name` in commands. Enabled servers go into the user
-config of every agent under `agents` (`~/.claude.json`, `~/.codex/config.toml`, …), in that
-agent's own format. An entry of the same name that is already there is that server: skillet
-overwrites it with the catalog's definition and manages it from then on, so disabling the server,
-or the end of a `run` that brought it, removes the entry. Entries under other names stay untouched. A server may also carry
-`environment`, `headers`, `timeout` (seconds) and `disabled_tools`; an agent gets the ones it
-supports. For crush, skillet writes the legacy `crush.json`, which crush reads next to `crushrc`.
-Servers are global: a project cannot enable them, `skillet run` can.
-
-**Secrets.** Write a secret as `${NAME}` anywhere in a server definition. Its value is the field
-labelled `NAME` of a 1Password item listed under `secrets` by account, vault and item id (the `h`,
-`v` and `i` of the item's private link); with several items, the first that has the field wins. A
-`NAME: value` line in `~/.config/skillet/secrets.yaml`, a file you keep yourself and that is never
-pushed, overrides 1Password. Values are filled in when an agent's config is written, so the agent
-configs hold the real values and the catalog never does. `skillet mcp import` copies definitions as
-they are: replace the keys it brought along with `${NAME}` before pushing the catalog.
-
-skillet reads 1Password through the `op` CLI, one call per item, and only when an entry has to be
-written: it remembers a hash of every entry it wrote, so a sync that changes nothing asks for
-nothing. A server whose `${NAME}` has no value, or whose item cannot be read, is left as it is and
-reported. The `secrets` list of an included gist is ignored.
-
-**Versions.** All skills of a source share its `ref`. `update` moves a branch forward. A tag or a
-commit keeps the source at the version you evaluated. `skillet sources` shows the commit each
-clone is at.
-
-**Included gists.** An included gist contributes its sources, packs, and what it enables. Your own
-entries win a name clash, then the earlier include. Included entries are read-only: disable an
-included skill, put it in your own packs, or override a pack by creating one of the same name.
-Gists may include further gists. Each gist takes part once, so gists that include each other are
-safe. `update` refreshes the cached copies; an unreachable gist falls back to its cache with a
-warning. `skillet gist list` shows the tree.
+- **Skills** are written `name@owner/repo`. skillet records them that way; commands accept the bare
+  name. A reference stops resolving when the skill comes from another source.
+- **Sources** without `skills` take every skill their repository offers, and `update` brings in the
+  ones they gain. `update` moves a branch `ref` forward; a tag or a commit keeps the version you
+  evaluated. `skillet sources` shows the commit each clone is at.
+- **Projects** keep their own `packs`, `skills` and `except` in `.skillet.toml`. Project skills add
+  to the global ones. MCP servers are global: a project cannot enable them, `skillet run` can.
+- **Agents**: `claude-code`, `codex`, `cursor`, `gemini-cli`, `github-copilot`, `opencode`, `pi`
+  get skills; `claude-code`, `codex`, `crush`, `cursor`, `gemini-cli`, `opencode`, `zed` get MCP
+  servers.
+- **MCP servers** go into each agent's user config (`~/.claude.json`, `~/.codex/config.toml`, …)
+  in that agent's own format. An entry of the same name that is already there is that server:
+  skillet overwrites it and manages it from then on, so disabling the server, or the end of a `run`
+  that brought it, removes it. Entries under other names stay untouched. A server may also carry
+  `environment`, `headers`, `timeout` (seconds) and `disabled_tools`.
+- **Secrets** are written `${NAME}` in a server definition. The value is the field labelled `NAME`
+  of a 1Password item under `secrets` (the `h`, `v` and `i` of the item's private link are its
+  account, vault and item); the first item that has the field wins, and a `NAME = "value"` line in
+  `~/.config/skillet/secrets.toml` overrides it. Values are filled in when an agent's config is
+  written, so they never reach the config or its gist. 1Password is asked only when an entry has to
+  be written; a server without its secret is left as it is and reported.
+- **Included gists** contribute their sources, servers, packs and what they enable. Your own entries
+  win a name clash, then the earlier include. Included entries are read-only: disable them, put them
+  in your own packs, or override a pack with one of the same name. Gists may include gists; each
+  takes part once, so cycles are harmless. The `secrets` of an included gist are ignored.
 
 ## How it works
 
 - Each source is shallow-cloned into `~/.local/share/skillet/repos/<owner>/<repo>`.
 - An enabled skill is a chain of two symlinks: `~/.agents/skills/<name>` points into the clone, and
   each agent directory such as `~/.claude/skills/<name>` points at `../../.agents/skills/<name>`.
-  Projects use `./.agents/skills` the same way. Enabling and disabling works offline.
-- skillet touches only links of this chain. Other directories and links stay as they are, and one
-  that stands where an enabled skill goes is reported as a conflict. `--force`, on any command,
-  deletes such an entry and links the skill.
-- Descriptions come from each skill's `SKILL.md`, cached in `~/.local/share/skillet/index.json`.
-- `run` tracks sessions in `.claude/skills/.skillet-sessions/` and, for servers, in
-  `~/.local/share/skillet/sessions/`. Parallel sessions keep each other's entries, and the next
-  `sync` or `run` cleans up after a crashed one.
-- `run` changes real files: the skills appear in the project, and the servers in the user config of
-  the agent the command starts (`claude`, `codex`, `gemini`, …), or of every configured agent for
-  any other command. Another session of that agent that starts meanwhile sees them too. An agent
-  that is already running picks changes up after a restart.
+  Projects use `./.agents/skills` the same way. The whole skill folder is linked, and enabling or
+  disabling works offline.
+- skillet touches only links of this chain. Something else that stands where an enabled skill goes
+  is reported as a conflict; `--force`, on any command, deletes it and links the skill.
 - Agent configs are edited in place: comments, key order and everything outside the server entries
   stay as they are.
-- The links are machine-local: add `.claude/skills/` and `.agents/skills/` to the project's ignore
-  file. `.skillet.yaml` can be committed.
-- An agent directory that is a symlink to `.agents/skills` is left alone: the skills already show
-  up through it.
+- `run` changes real files: the skills appear in the project, and the servers in the user config of
+  the agent the command starts (`claude`, `codex`, `gemini`, …). Another session of that agent that
+  starts meanwhile sees them too; a running one picks changes up after a restart. Parallel runs
+  keep each other's entries, and the next `sync` cleans up after a crashed one.
+- The links are machine-local: add `.claude/skills/` and `.agents/skills/` to a project's ignore
+  file. `.skillet.toml` can be committed.
 
 ## Development
 

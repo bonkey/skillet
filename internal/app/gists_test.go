@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -48,9 +49,13 @@ var (
 )
 
 func manifest(source, url, skill string, includes ...string) string {
-	return fmt.Sprintf("includes: [%s]\nsources:\n  %s:\n    url: %s\n    skills: [%s]\n"+
-		"packs:\n  pack-%s:\n    description: Pack of %s\n    skills: [%s]\nenabled:\n  packs: [pack-%s]\n",
-		strings.Join(includes, ", "), source, url, skill, skill, skill, skill, skill)
+	quoted := make([]string, len(includes))
+	for i, id := range includes {
+		quoted[i] = strconv.Quote(id)
+	}
+	return fmt.Sprintf("includes = [%s]\n\n[sources.%q]\nurl = %q\nskills = [%q]\n\n"+
+		"[packs.pack-%s]\ndescription = \"Pack of %s\"\nskills = [%q]\n\n[enabled]\npacks = [\"pack-%s\"]\n",
+		strings.Join(quoted, ", "), source, url, skill, skill, skill, skill, skill)
 }
 
 func TestSetRefPinsASource(t *testing.T) {
@@ -114,7 +119,7 @@ func TestPushAndPull(t *testing.T) {
 		t.Fatalf("pushed content:\n%s", gists.files[id])
 	}
 	e.app.Toggle(e.app.Global(), false, "beta")
-	if _, created, err = e.app.Push(false, false); err != nil || created || !strings.HasSuffix(gists.files[id], "skills:\n        - alpha\n") {
+	if _, created, err = e.app.Push(false, false); err != nil || created || !strings.HasSuffix(gists.files[id], "[enabled]\nskills = ['alpha@acme/skills']\n") {
 		t.Fatalf("second push: %v %v\n%s", created, err, gists.files[id])
 	}
 
@@ -190,7 +195,7 @@ func TestIncludesMergeOnceAndSurviveCycles(t *testing.T) {
 	if _, err := e.app.Toggle(e.app.Global(), false, "alpha"); err != nil {
 		t.Fatal(err)
 	}
-	if isLink(filepath.Join(global, "alpha")) || !reflect.DeepEqual(e.app.Local.Enabled.Except, []string{"alpha"}) {
+	if isLink(filepath.Join(global, "alpha")) || !reflect.DeepEqual(e.app.Local.Enabled.Except, []string{"alpha@acme/skills"}) {
 		t.Errorf("disable of an inherited skill: %+v", e.app.Local.Enabled)
 	}
 	err := e.app.EditPack("mine", true, func(local *catalog.Catalog) error {

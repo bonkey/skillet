@@ -12,7 +12,7 @@ import (
 	"strings"
 	"syscall"
 
-	"gopkg.in/yaml.v3"
+	"github.com/pelletier/go-toml/v2"
 
 	"github.com/bonkey/skillet/internal/catalog"
 )
@@ -24,19 +24,19 @@ func ProjectDir(root string) string {
 }
 
 func file(dir string, pid int) string {
-	return filepath.Join(dir, strconv.Itoa(pid)+".yaml")
+	return filepath.Join(dir, strconv.Itoa(pid)+".toml")
 }
 
 // Session is what one `skillet run` enables while its command runs.
 type Session struct {
-	catalog.Set `yaml:",inline"`
+	catalog.Set
 	// Agent limits the session's MCP servers to the agent that the command
 	// starts. Empty means every configured agent.
-	Agent string `yaml:"agent,omitempty"`
+	Agent string `toml:"agent,omitempty"`
 }
 
 func Write(dir string, pid int, s Session) error {
-	data, err := yaml.Marshal(s)
+	data, err := toml.Marshal(s)
 	if err != nil {
 		return err
 	}
@@ -60,7 +60,7 @@ func Live(dir string) []Session {
 	entries, _ := os.ReadDir(dir)
 	var sets []Session
 	for _, entry := range entries {
-		pid, err := strconv.Atoi(strings.TrimSuffix(entry.Name(), ".yaml"))
+		pid, err := strconv.Atoi(strings.TrimSuffix(entry.Name(), ".toml"))
 		if err != nil {
 			continue
 		}
@@ -69,7 +69,7 @@ func Live(dir string) []Session {
 			continue
 		}
 		var s Session
-		if data, err := os.ReadFile(file(dir, pid)); err == nil && yaml.Unmarshal(data, &s) == nil {
+		if data, err := os.ReadFile(file(dir, pid)); err == nil && toml.Unmarshal(data, &s) == nil {
 			sets = append(sets, s)
 		}
 	}

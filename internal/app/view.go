@@ -111,7 +111,7 @@ func (a *App) View() (View, error) {
 	for _, name := range a.Catalog.PackNames() {
 		pack := a.Catalog.Packs[name]
 		view.Packs = append(view.Packs, PackView{Name: name, Description: pack.Description,
-			Skills: slices.Clone(pack.Skills), MCPs: slices.Clone(pack.MCPs), From: a.Catalog.PackOrigin[name]})
+			Skills: a.Catalog.PackSkills(name), MCPs: slices.Clone(pack.MCPs), From: a.Catalog.PackOrigin[name]})
 	}
 	if len(loose)+len(looseMCPs) > 0 {
 		view.Packs = append(view.Packs, PackView{Name: NoPack,

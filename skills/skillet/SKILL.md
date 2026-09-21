@@ -8,7 +8,8 @@ description: "Finds, enables and disables agent skills, MCP servers and whole pa
 `skillet` keeps a catalog of evaluated skills and MCP servers, grouped into packs. An enabled skill
 is a symlink in the agent's skills directory, an enabled server is an entry in the agent's user
 config; disabled ones stay in the catalog. In commands, `@name` is a pack, `mcp:name` is a server
-and a bare name is a skill.
+and a bare name is a skill. The config records a skill as `name@owner/repo`; commands accept that
+spelling too, and reject it when the skill comes from another source.
 
 ## Search the catalog first
 
@@ -47,8 +48,8 @@ matching servers the same way, with their command or URL as `target`.
 
 | The user means | Flag | Effect |
 | --- | --- | --- |
-| this project, this repo, this task | `-p` | Links in `./.claude/skills` and `./.agents/skills`; the set is saved in `.skillet.yaml` at the project root. Without a `.skillet.yaml` up the tree, `-p` creates one in the working directory. |
-| everywhere, always, by default | none | Links in `~/.claude/skills` and `~/.agents/skills`; the set is saved in `~/.config/skillet/config.yaml`. |
+| this project, this repo, this task | `-p` | Links in `./.claude/skills` and `./.agents/skills`; the set is saved in `.skillet.toml` at the project root. Without a `.skillet.toml` up the tree, `-p` creates one in the working directory. |
+| everywhere, always, by default | none | Links in `~/.claude/skills` and `~/.agents/skills`; the set is saved in `~/.config/skillet/config.toml`. |
 
 When the request names no scope, prefer `-p` for skills a task needs and the global scope for
 skills the user wants in general. Ask when the choice matters and is unclear.
@@ -102,9 +103,9 @@ project: say so, and offer to disable it globally and enable it with `-p` in the
 - Never ask for, read, print or write a secret value. Secrets come from the user's 1Password
   items or a local file. When a line says `missing-secret mcp:<name> ... no value for <NAME>`, or
   a `note` mentions 1Password, tell the user: they add a field `<NAME>` to their 1Password item,
-  unlock 1Password, or add a `<NAME>: value` line to `~/.config/skillet/secrets.yaml` themselves;
+  unlock 1Password, or add a `<NAME> = "value"` line to `~/.config/skillet/secrets.toml` themselves;
   the following sync writes the server.
-- Do not edit `~/.config/skillet/secrets.yaml` or the agents' MCP config files by hand, and do not
+- Do not edit `~/.config/skillet/secrets.toml` or the agents' MCP config files by hand, and do not
   add a server definition to the catalog without the user's consent.
 
 ## For one session only

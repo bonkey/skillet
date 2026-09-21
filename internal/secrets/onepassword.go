@@ -13,9 +13,9 @@ import (
 // Item names a 1Password item whose fields are secrets: a field labelled
 // TAVILY_API_KEY is the value of ${TAVILY_API_KEY}.
 type Item struct {
-	Account string `yaml:"account" json:"account"` // sign-in address or account id
-	Vault   string `yaml:"vault" json:"vault"`
-	Item    string `yaml:"item" json:"item"`
+	Account string `json:"account"` // sign-in address or account id
+	Vault   string `json:"vault"`
+	Item    string `json:"item"`
 }
 
 // Reader fetches the fields of an item, keyed by label.

@@ -203,28 +203,55 @@ func TestViewFilter(t *testing.T) {
 	}
 }
 
-func TestOpenMovesALegacyConfigFile(t *testing.T) {
+func TestSourceThatTakesAllSkills(t *testing.T) {
 	e := setup(t)
-	e.add(t, true)
-	if err := os.Rename(e.p.ConfigFile(), e.p.LegacyConfigFile()); err != nil {
+	name, url, found, err := e.app.Fetch(e.origin, "")
+	if err != nil {
 		t.Fatal(err)
 	}
-	a, err := Open(e.p)
-	if err != nil || !a.Catalog.HasSkill("alpha") || len(a.Notices) != 1 {
-		t.Fatalf("the legacy file is read under its new name: %v %v", err, a.Notices)
+	err = e.app.Add(AddRequest{Source: name, URL: url, All: true, Skills: []string{"alpha", "beta"},
+		Pack: "acme", PackDescription: "Acme skills", Enable: true})
+	if err != nil || len(found) != 2 {
+		t.Fatal(err)
 	}
-	if _, err := os.Stat(e.p.LegacyConfigFile()); !os.IsNotExist(err) {
-		t.Error("the legacy file should be gone")
+	raw, _ := os.ReadFile(e.p.ConfigFile())
+	if strings.Contains(string(raw), "alpha") || !strings.Contains(string(raw), "sources = ['acme/skills']") {
+		t.Fatalf("the config names the source, not its skills:\n%s", raw)
+	}
+	global := filepath.Join(e.p.Home, ".claude", "skills")
+	if !isLink(filepath.Join(global, "alpha")) || !isLink(filepath.Join(global, "beta")) {
+		t.Fatal("all skills of the source are enabled")
 	}
 
-	// With both present, the current one counts and the other is left alone.
-	write(t, e.p.LegacyConfigFile(), "agents: [codex]\n")
-	again, err := Open(e.p)
-	if err != nil || !again.Catalog.HasSkill("alpha") || len(again.Notices) != 0 {
-		t.Fatalf("both files: %v %v", err, again.Notices)
+	// A skill the repository gains later joins the source and the pack.
+	write(t, filepath.Join(e.origin, "skills/gamma/SKILL.md"), "---\nname: gamma\ndescription: The gamma skill\n---\n")
+	git(t, e.origin, "add", "-A")
+	git(t, e.origin, "commit", "-q", "-m", "add gamma")
+	if _, err := e.app.Update(false); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := os.Stat(e.p.LegacyConfigFile()); err != nil {
-		t.Error("a legacy file next to a current one is not touched")
+	if !e.app.Catalog.HasSkill("gamma") {
+		t.Fatal("gamma should be in the catalog after the update")
+	}
+	if !isLink(filepath.Join(global, "gamma")) {
+		t.Error("the enabled pack covers the new skill")
+	}
+	reopened, _ := Open(e.p)
+	if got, _ := reopened.Enabled(reopened.Global()); !reflect.DeepEqual(got, []string{"alpha", "beta", "gamma"}) {
+		t.Errorf("enabled after reopen: %v", got)
+	}
+
+	if _, err := e.app.Remove("alpha"); err == nil || !strings.Contains(err.Error(), "comes with all of") {
+		t.Errorf("a single skill of such a source cannot be removed: %v", err)
+	}
+	if _, err := e.app.Remove("acme/skills"); err != nil {
+		t.Fatal(err)
+	}
+	if isLink(filepath.Join(global, "alpha")) || len(e.app.Catalog.Sources) != 0 || len(e.app.Local.Packs["acme"].Sources) != 0 {
+		t.Errorf("removing the source removes its skills, links and pack membership: %+v", e.app.Local.Packs["acme"])
+	}
+	if _, err := os.Stat(e.p.RepoDir("acme/skills")); !os.IsNotExist(err) {
+		t.Error("the clone should be gone")
 	}
 }
 

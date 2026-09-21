@@ -457,7 +457,7 @@ func (m *Model) askPack() {
 			})
 			return nil
 		}
-		inPack := slices.Contains(pack.Skills, r.skill) || slices.Contains(pack.MCPs, r.mcp)
+		inPack := slices.Contains(m.app.Catalog.PackSkills(name), r.skill) || slices.Contains(pack.MCPs, r.mcp)
 		m.editPack(name, false, func(local *catalog.Catalog) error {
 			if inPack {
 				return local.PackRemove(name, []string{member})
@@ -548,7 +548,7 @@ func (m *Model) updatePick(msg tea.KeyMsg) tea.Cmd {
 }
 
 func (m *Model) askAddPack(skills []string) {
-	req := app.AddRequest{Source: m.pick.source, URL: m.pick.url, Skills: skills}
+	req := app.AddRequest{Source: m.pick.source, URL: m.pick.url, Skills: skills, All: len(skills) == len(m.pick.names)}
 	add := func(m *Model) {
 		if err := m.app.Add(req); err != nil {
 			m.app.DropUnusedClone(req.Source)
@@ -738,7 +738,7 @@ func (m *Model) detail() string {
 		lines := []string{styleTitle.Render("mcp:" + server.Name), "", server.Type + " MCP server", server.Target, ""}
 		if len(server.MissingSecrets) > 0 {
 			lines = append(lines, styleWarn.Render("no value for "+strings.Join(server.MissingSecrets, ", ")+
-				": add the field to a 1Password item under `secrets`, or a line to secrets.yaml"), "")
+				": add the field to a 1Password item under `secrets`, or a line to secrets.toml"), "")
 		}
 		packs := "none"
 		if len(server.Packs) > 0 {

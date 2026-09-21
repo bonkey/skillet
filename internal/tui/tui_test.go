@@ -75,7 +75,7 @@ func TestRowsGroupSkillsUnderPacks(t *testing.T) {
 func TestToggleSkillAndPack(t *testing.T) {
 	m := model(t)
 	press(m, "down", " ") // alpha
-	if got := m.app.Catalog.Enabled; !reflect.DeepEqual(got.Skills, []string{"alpha"}) {
+	if got := m.app.Catalog.Enabled; !reflect.DeepEqual(got.Skills, []string{"alpha@acme/skills"}) {
 		t.Fatalf("after toggling alpha: %+v", got)
 	}
 	if !strings.Contains(m.View(), "[-] @acme  1/3 enabled") {
@@ -105,7 +105,7 @@ func TestScopeSwitchWritesProjectManifest(t *testing.T) {
 		t.Fatalf("scope %+v, global set %+v", m.scope, m.app.Catalog.Enabled)
 	}
 	set, err := catalog.LoadSet(filepath.Join(m.app.Paths.Cwd, paths.ManifestName))
-	if err != nil || !reflect.DeepEqual(set.Skills, []string{"alpha"}) {
+	if err != nil || !reflect.DeepEqual(set.Skills, []string{"alpha@acme/skills"}) {
 		t.Fatalf("manifest: %+v %v", set, err)
 	}
 	press(m, "tab")

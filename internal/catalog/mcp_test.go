@@ -18,7 +18,7 @@ func withMCPs() *Catalog {
 }
 
 func TestMCPRoundTrip(t *testing.T) {
-	file := filepath.Join(t.TempDir(), "config.yaml")
+	file := filepath.Join(t.TempDir(), "config.toml")
 	c := withMCPs()
 	c.Enabled = Set{Packs: []string{"acme"}, MCPs: []string{"tavily"}, Except: []string{"mcp:simctl"}}
 	if err := c.Save(file); err != nil {
@@ -93,7 +93,7 @@ func TestPacksHoldServers(t *testing.T) {
 	if err := c.PackAdd("mixed", []string{"a", "mcp:tavily"}); err != nil {
 		t.Fatal(err)
 	}
-	if got := c.Packs["mixed"]; !reflect.DeepEqual(got.MCPs, []string{"tavily"}) || !reflect.DeepEqual(got.Skills, []string{"a", "b", "pr"}) {
+	if got := c.Packs["mixed"]; !reflect.DeepEqual(got.MCPs, []string{"tavily"}) || !reflect.DeepEqual(got.Skills, []string{"a@acme/skills", "b", "pr"}) {
 		t.Fatalf("after add: %+v", got)
 	}
 	if err := c.PackAdd("mixed", []string{"mcp:ghost"}); err == nil {

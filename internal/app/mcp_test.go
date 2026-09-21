@@ -11,7 +11,7 @@ import (
 	"github.com/bonkey/skillet/internal/secrets"
 )
 
-// writeSecrets stands for the user editing secrets.yaml.
+// writeSecrets stands for the user editing secrets.toml.
 func writeSecrets(t *testing.T, e env, content string) {
 	t.Helper()
 	write(t, e.p.SecretsFile(), content)
@@ -62,7 +62,7 @@ func TestEnablingAPackWritesItsServers(t *testing.T) {
 		t.Error("the pack's skill is linked too")
 	}
 
-	writeSecrets(t, e, "TAVILY_API_KEY: tvly-secret\n")
+	writeSecrets(t, e, "TAVILY_API_KEY = \"tvly-secret\"\n")
 	if _, err := e.app.Sync(e.app.Global(), SyncOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -155,53 +155,17 @@ func TestRunLimitsServersToTheAgentItStarts(t *testing.T) {
 	}
 }
 
-func TestImportMCPSetup(t *testing.T) {
+func TestEnablingOverwritesAnEntryOfTheSameName(t *testing.T) {
 	e := setup(t)
+	withServers(t, e)
 	claude := filepath.Join(e.p.Home, ".claude.json")
-	write(t, e.app.MCPSetupConfig(), `{
-  "presets": {"research": ["tavily", "firecrawl"], "ios-dev": ["simctl"], "empty": ["ghost"]},
-  "mcps": {
-    "tavily": {"type": "remote", "url": "https://mcp.tavily.com/mcp/?tavilyApiKey=tvly-1"},
-    "firecrawl": {"type": "local", "command": ["npx", "-y", "firecrawl-mcp"], "environment": {"FIRECRAWL_API_KEY": "fc-1"}},
-    "simctl": {"type": "local", "command": ["npx", "-y", "simctl-mcp"], "timeout": 20},
-    "broken": {"type": "local"}
-  }
-}`)
-	write(t, claude, `{"mcpServers": {"tavily": {"type": "http", "url": "https://old"}, "mine": {"url": "https://mine"}}}`)
-	before := read(t, claude)
+	write(t, claude, `{"mcpServers": {"simctl": {"type": "http", "url": "https://old"}, "mine": {"url": "https://mine"}}}`)
 
-	report, err := e.app.ImportMCP(e.app.MCPSetupConfig())
-	if err != nil {
+	if _, err := e.app.Toggle(e.app.Global(), true, "mcp:simctl"); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(report.Servers, []string{"firecrawl", "simctl", "tavily"}) || report.Skipped["broken"] == "" {
-		t.Errorf("servers: %v skipped: %v", report.Servers, report.Skipped)
-	}
-	if !reflect.DeepEqual(report.Packs, []string{"ios-dev", "research"}) {
-		t.Errorf("packs: %v", report.Packs)
-	}
-	if read(t, claude) != before || !e.app.Local.Enabled.Empty() {
-		t.Error("an import enables nothing and changes no agent config")
-	}
-	reopened, _ := Open(e.p)
-	if got := reopened.Catalog.MCPs["firecrawl"]; got == nil || got.Environment["FIRECRAWL_API_KEY"] != "fc-1" || reopened.Catalog.MCPs["simctl"].Timeout != 20 {
-		t.Errorf("definitions are copied as they are: %+v", got)
-	}
-	if got := reopened.Catalog.Packs["research"]; got == nil || !reflect.DeepEqual(got.MCPs, []string{"firecrawl", "tavily"}) || got.Description == "" {
-		t.Errorf("presets become packs: %+v", got)
-	}
-
-	// Enabling meets the entry mcp-setup left under the same name and overwrites it.
-	if _, err := e.app.Toggle(e.app.Global(), true, "mcp:tavily"); err != nil {
-		t.Fatal(err)
-	}
-	if text := read(t, claude); !strings.Contains(text, "tavilyApiKey=tvly-1") || strings.Contains(text, "https://old") || !strings.Contains(text, "https://mine") {
+	if text := read(t, claude); !strings.Contains(text, "simctl-mcp") || strings.Contains(text, "https://old") || !strings.Contains(text, "https://mine") {
 		t.Errorf("claude config:\n%s", text)
-	}
-
-	again, err := e.app.ImportMCP(e.app.MCPSetupConfig())
-	if err != nil || len(again.Servers) != 0 || len(again.Skipped) != 4 {
-		t.Errorf("a second import adds nothing: %+v %v", again, err)
 	}
 }
 
@@ -254,7 +218,7 @@ func TestSecretsComeFromOnePasswordItemsOnlyWhenNeeded(t *testing.T) {
 	}
 
 	// A local value wins over the item.
-	writeSecrets(t, e, "TAVILY_API_KEY: local-override\n")
+	writeSecrets(t, e, "TAVILY_API_KEY = \"local-override\"\n")
 	e.app.Local.MCPs["tavily"].URL += "&v=2"
 	e.app.Save()
 	if _, err := e.app.Sync(e.app.Global(), SyncOptions{}); err != nil || !strings.Contains(read(t, claude), "local-override&v=2") {

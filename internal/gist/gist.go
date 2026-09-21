@@ -11,7 +11,7 @@ import (
 )
 
 // FileName is the gist file that holds a catalog.
-const FileName = "skillet.yaml"
+const FileName = "skillet.toml"
 
 type Client interface {
 	Read(id string) (content string, err error)

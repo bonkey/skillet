@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 
-	"gopkg.in/yaml.v3"
+	"github.com/pelletier/go-toml/v2"
 
 	"github.com/bonkey/skillet/internal/catalog"
 	"github.com/bonkey/skillet/internal/gist"
@@ -22,7 +22,7 @@ type Included struct {
 }
 
 func (a *App) gistCache(id string) string {
-	return filepath.Join(a.Paths.Data, "gists", id+".yaml")
+	return filepath.Join(a.Paths.Data, "gists", id+".toml")
 }
 
 // reload walks the includes of the local catalog depth first and rebuilds
@@ -73,6 +73,9 @@ func (a *App) merge() error {
 	}
 	merged, err := catalog.Merge(a.Local, ids, catalogs)
 	a.Catalog = merged
+	if err == nil {
+		a.expand()
+	}
 	return err
 }
 
@@ -101,7 +104,7 @@ func (a *App) readGist(id string, refresh bool) (*catalog.Catalog, error) {
 
 func parse(content string) (*catalog.Catalog, error) {
 	c := catalog.New()
-	err := yaml.Unmarshal([]byte(content), c)
+	err := toml.Unmarshal([]byte(content), c)
 	return c, err
 }
 
@@ -111,7 +114,7 @@ func (a *App) Push(fresh, public bool) (id string, created bool, err error) {
 	id, _ = gist.ID(a.Local.Gist)
 	if fresh || id == "" {
 		// The gist must name itself so that a pull knows where it came from.
-		if id, err = a.Gists.Create("agents: []\n", public); err != nil {
+		if id, err = a.Gists.Create("agents = []\n", public); err != nil {
 			return "", false, err
 		}
 		a.Local.Gist, created = id, true
@@ -127,7 +130,7 @@ func (a *App) Push(fresh, public bool) (id string, created bool, err error) {
 }
 
 // Pull replaces the local catalog with the one in a gist ("" for the
-// catalog's own gist), keeps the previous file as config.yaml.bak, fetches
+// catalog's own gist), keeps the previous file as config.toml.bak, fetches
 // what is missing and syncs the global links.
 func (a *App) Pull(ref string) (string, error) {
 	if ref == "" {
