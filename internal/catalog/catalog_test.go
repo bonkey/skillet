@@ -263,3 +263,19 @@ func TestPackMayHoldKnownForeignSkills(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestExampleCatalogEnablesTheSkilletSkill(t *testing.T) {
+	c, err := Load(filepath.Join("..", "..", "examples", "catalog.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Resolve(c.Enabled); !reflect.DeepEqual(got, []string{"skillet"}) {
+		t.Errorf("enabled: %v", got)
+	}
+	if _, err := os.Stat(filepath.Join("..", "..", "skills", "skillet", "SKILL.md")); err != nil {
+		t.Errorf("the example points at a skill this repository must contain: %v", err)
+	}
+	if c.Packs["skillet"].Description == "" {
+		t.Error("the example pack needs a description")
+	}
+}

@@ -3,9 +3,21 @@
 A local catalog of agent skills. Keep one list of the skills you have evaluated, group them into
 packs, and enable them globally, per project, or for a single agent session.
 
-skillet links whole skill folders, so multi-file skills arrive complete. Packs on
-[skills.sh](https://www.skills.sh/docs/packs) install only a skill's `SKILL.md`
-([vercel-labs/skills#2197](https://github.com/vercel-labs/skills/issues/2197)).
+Every installed skill puts its description into every agent session, whether the task needs it or
+not. With [skills.sh](https://www.skills.sh) and `npx skills`, installed means loaded: the only way
+to switch a skill off is to remove it, and then nothing remembers that you evaluated it. skillet
+separates the two. The catalog keeps everything you trust; a session loads only what you enabled.
+
+| | skills.sh / `npx skills` | skillet |
+| --- | --- | --- |
+| Skills you keep but do not load | remove them, find them again later | stay in the catalog, disabled |
+| Switching on and off | reinstall over the network | one command or one key, offline |
+| Packs | built in a web UI, stored in a Vercel account | a few lines of local YAML with a description, toggled as a unit |
+| Scope | global or project | global, project, or one command: `skillet run @ios -- claude` |
+| Moving to another machine, sharing | a pack URL, or a lock file per project | the whole catalog in a gist, which can include other people's gists |
+
+A TUI shows every skill with its description and state, and each source tracks a branch, a tag or
+a commit. `skillet import` takes over an existing `npx skills` install.
 
 ## Install
 
@@ -55,6 +67,31 @@ lock, fetches the content from the source, creates one pack per source, and enab
 globally. It **deletes** the folder of every imported skill in `~/.agents/skills` and puts a link
 in its place. Folders the lock does not list stay.
 
+## The skillet skill
+
+The repository ships a skill, [`skills/skillet`](skills/skillet/SKILL.md), that teaches agents to
+search the catalog before looking for skills elsewhere, and to enable and disable skills and packs.
+Install it with skillet itself:
+
+```sh
+skillet add bonkey/skillet --all --enable     # into the catalog, enabled globally
+
+skillet add bonkey/skillet --all \
+    --pack skillet --pack-description "Lets agents manage skills with skillet"
+skillet enable -p @skillet                    # or only in this project
+skillet run @skillet -- claude                # or only for one session
+```
+
+On a machine without a catalog, [`examples/catalog.yaml`](examples/catalog.yaml) is a starting
+catalog with the skill enabled:
+
+```sh
+mkdir -p ~/.config/skillet
+curl -fsSL https://raw.githubusercontent.com/bonkey/skillet/main/examples/catalog.yaml \
+    -o ~/.config/skillet/catalog.yaml
+skillet update                                # clones the sources and links what is enabled
+```
+
 ## Catalog
 
 `~/.config/skillet/catalog.yaml` holds the catalog and the global enabled set:
@@ -82,7 +119,7 @@ enabled:
 A project keeps its own `packs`, `skills`, and `except` in `.skillet.yaml` at its root. Project
 skills add to the global ones.
 
-Agents: `claude-code`, `codex`, `cursor`, `gemini-cli`, `github-copilot`, `opencode`.
+Agents: `claude-code`, `codex`, `cursor`, `gemini-cli`, `github-copilot`, `opencode`, `pi`.
 
 **Versions.** All skills of a source share its `ref`. `update` moves a branch forward. A tag or a
 commit keeps the source at the version you evaluated. `skillet sources` shows the commit each
@@ -101,7 +138,9 @@ warning. `skillet gist list` shows the tree.
 - An enabled skill is a chain of two symlinks: `~/.agents/skills/<name>` points into the clone, and
   each agent directory such as `~/.claude/skills/<name>` points at `../../.agents/skills/<name>`.
   Projects use `./.agents/skills` the same way. Enabling and disabling works offline.
-- skillet touches only links of this chain. Other directories and links stay as they are.
+- skillet touches only links of this chain. Other directories and links stay as they are, and one
+  that stands where an enabled skill goes is reported as a conflict. `--force`, on any command,
+  deletes such an entry and links the skill.
 - Descriptions come from each skill's `SKILL.md`, cached in `~/.local/share/skillet/index.json`.
 - `run` tracks sessions in `.claude/skills/.skillet-sessions/`. Parallel sessions keep each
   other's links, and the next `sync` or `run` cleans up after a crashed one.

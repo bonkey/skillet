@@ -173,6 +173,35 @@ func TestSyncReplacesUnmanagedFoldersWhenAllowed(t *testing.T) {
 	}
 }
 
+func TestSyncReplacesConflictsInAgentDirsWhenAllowed(t *testing.T) {
+	f := setup(t)
+	elsewhere := filepath.Join(t.TempDir(), "old-store", "alpha")
+	mkdir(t, elsewhere)
+	symlink(t, elsewhere, filepath.Join(f.claude, "alpha"))      // foreign link where a skill goes
+	mkdir(t, filepath.Join(f.claude, "beta", "content"))         // real folder where a skill goes
+	symlink(t, elsewhere, filepath.Join(f.claude, "not-wanted")) // foreign link no skill needs
+	force := Options{Replace: func(string) bool { return true }}
+
+	if got := f.sync(t, Options{}); got[".claude/alpha"] != OpConflict || got[".claude/beta"] != OpConflict {
+		t.Fatalf("without force: %v", got)
+	}
+	got := f.sync(t, force)
+	if got[".claude/alpha"] != OpReplace || got[".claude/beta"] != OpReplace || len(got) != 2 {
+		t.Fatalf("with force: %v", got)
+	}
+	for _, name := range []string{"alpha", "beta"} {
+		if got := target(t, filepath.Join(f.claude, name)); got != "../../.agents/skills/"+name {
+			t.Errorf("%s -> %s", name, got)
+		}
+	}
+	if _, err := os.Stat(elsewhere); err != nil {
+		t.Error("replacing a link must not delete what it pointed at")
+	}
+	if got := target(t, filepath.Join(f.claude, "not-wanted")); got != elsewhere {
+		t.Errorf("an entry no skill needs must stay, even with force: %s", got)
+	}
+}
+
 func TestSyncMigratesDirectAgentLinks(t *testing.T) {
 	f := setup(t)
 	symlink(t, f.desired["alpha"], filepath.Join(f.claude, "alpha")) // straight into the clone
@@ -191,6 +220,11 @@ func TestDirs(t *testing.T) {
 	got, _ = Dirs([]string{"claude-code", "codex"}, "/h", false)
 	if !reflect.DeepEqual(got, []string{"/h/.claude/skills", "/h/.codex/skills"}) {
 		t.Errorf("global dirs: %v", got)
+	}
+	for _, project := range []bool{false, true} {
+		if got, err := Dirs([]string{"pi"}, "/h", project); err != nil || len(got) != 0 {
+			t.Errorf("pi reads the canonical directory itself and needs no links of its own: %v %v", got, err)
+		}
 	}
 	if _, err := Dirs([]string{"nope"}, "/h", false); err == nil {
 		t.Error("expected an error for an unknown agent")

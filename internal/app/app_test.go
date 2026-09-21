@@ -134,6 +134,22 @@ func TestAddEnableDisableRemove(t *testing.T) {
 	}
 }
 
+func TestForceReplacesConflictingEntries(t *testing.T) {
+	e := setup(t)
+	e.add(t, false)
+	blocked := filepath.Join(e.p.Home, ".claude", "skills", "alpha")
+	os.MkdirAll(filepath.Join(blocked, "stale"), 0o755)
+
+	report, err := e.app.Toggle(e.app.Global(), true, "alpha")
+	if err != nil || isLink(blocked) || len(report.Actions) == 0 {
+		t.Fatalf("without force the folder stays: %+v %v", report, err)
+	}
+	e.app.Force = true
+	if _, err := e.app.Sync(e.app.Global(), SyncOptions{}); err != nil || !isLink(blocked) {
+		t.Fatalf("with force the folder is replaced by the link: %v", err)
+	}
+}
+
 func TestProjectScope(t *testing.T) {
 	e := setup(t)
 	e.add(t, false)

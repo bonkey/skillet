@@ -27,6 +27,9 @@ var Agents = map[string]Agent{
 	"gemini-cli":     {".gemini/skills", canonical},
 	"github-copilot": {".copilot/skills", canonical},
 	"opencode":       {".config/opencode/skills", canonical},
+	// pi reads ~/.agents/skills and ./.agents/skills itself, and warns about
+	// a skill it finds twice, so it gets no directory of its own.
+	"pi": {canonical, canonical},
 }
 
 // Canonical is the directory below base whose links point into the clones.
@@ -74,7 +77,7 @@ func (a Action) String() string {
 	path := filepath.Join(a.Dir, a.Name)
 	switch a.Op {
 	case OpConflict:
-		return fmt.Sprintf("conflict %s exists and is not managed by skillet", path)
+		return fmt.Sprintf("conflict %s exists and is not managed by skillet; --force replaces it", path)
 	case OpUnlink:
 		return fmt.Sprintf("unlink   %s", path)
 	default:
@@ -86,8 +89,8 @@ type Options struct {
 	// ReposDir marks ownership: a canonical entry is managed when it is a
 	// symlink pointing into ReposDir.
 	ReposDir string
-	// Replace allows deleting an unmanaged canonical entry that stands where
-	// the named skill goes.
+	// Replace allows deleting an unmanaged entry, in the canonical or an
+	// agent directory, that stands where the named skill goes.
 	Replace func(name string) bool
 	DryRun  bool
 }
@@ -216,6 +219,8 @@ func planAgentDir(dir, canonicalDir string, linked, foreign map[string]bool, opt
 			continue
 		case isLink && owned(target):
 			action.Op = OpRelink
+		case opt.Replace != nil && opt.Replace(name):
+			action.Op = OpReplace
 		default:
 			action.Op = OpConflict
 		}

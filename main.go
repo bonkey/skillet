@@ -18,6 +18,9 @@ import (
 	"github.com/bonkey/skillet/internal/tui"
 )
 
+// force is the global --force flag.
+var force bool
+
 // version is set by release builds. Other builds report the module version
 // from the Go build info.
 var version string
@@ -46,6 +49,7 @@ func open() (*app.App, error) {
 	}
 	a, err := app.Open(p)
 	if err == nil {
+		a.Force = force
 		for _, warning := range a.Warnings {
 			fmt.Fprintln(os.Stderr, "warning:", warning)
 		}
@@ -76,6 +80,8 @@ In arguments, "@name" is a pack and a bare name is a skill.`,
 			return tui.Run(a)
 		},
 	}
+	cmd.PersistentFlags().BoolVar(&force, "force", false,
+		"delete files, folders and links that stand where an enabled skill goes, and link the skill")
 	cmd.AddCommand(importCmd(), addCmd(), removeCmd(), packCmd(), toggleCmd(true), toggleCmd(false),
 		syncCmd(), listCmd(), updateCmd(), runCmd(), sourcesCmd(), refCmd(), gistCmd())
 	return cmd

@@ -30,6 +30,10 @@ type App struct {
 	Index   *source.Index
 	Gists   gist.Client
 
+	// Force lets every sync delete unmanaged entries that stand where an
+	// enabled skill goes.
+	Force bool
+
 	Included []Included // the included gists, flattened in merge order
 	Warnings []string   // problems with included gists
 }
@@ -121,8 +125,8 @@ type SyncReport struct {
 
 type SyncOptions struct {
 	DryRun bool
-	// Replace allows deleting an unmanaged entry of the canonical skills
-	// directory that stands where the named skill goes.
+	// Replace allows deleting an unmanaged entry that stands where the
+	// named skill goes. App.Force allows it for every skill.
 	Replace func(name string) bool
 }
 
@@ -150,6 +154,9 @@ func (a *App) Sync(scope Scope, opt SyncOptions) (SyncReport, error) {
 	dirs, err := link.Dirs(a.Catalog.Agents, scope.Root, scope.Project)
 	if err != nil {
 		return report, err
+	}
+	if a.Force {
+		opt.Replace = func(string) bool { return true }
 	}
 	report.Actions, err = link.Sync(link.Canonical(scope.Root), dirs, desired, link.Options{
 		ReposDir: a.Paths.ReposDir(), Replace: opt.Replace, DryRun: opt.DryRun,
