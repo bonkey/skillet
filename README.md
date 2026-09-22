@@ -121,7 +121,8 @@ that have no clone yet, gives every agent directory the same links and lets a li
 that moved inside its source. What is enabled although its config file switches it off stays, and
 `sync` reports it as `extra`; `sync --clean` disables it. Commands print one line per kind of
 change, and per agent config for servers; `--verbose` prints every link and server entry, also
-those that were already right.
+those that were already right, and then which packs the enabled and disabled skills and servers
+belong to.
 
 `import` reads `~/.agents/.skill-lock.json`, fetches every source, creates one pack per source and
 enables everything. It **deletes** the folder of every imported skill in

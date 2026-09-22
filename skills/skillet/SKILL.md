@@ -95,7 +95,7 @@ project: say so, and offer to disable it globally and enable it with `-p` in the
    Disabling one skill of a pack leaves the pack's other skills enabled.
 
 4. Read the output. Each line is one kind of change with the scope and the names it covers:
-   `link`, `unlink`, `relink`, `replace`, `delete`. With `--verbose` each line is one link with its path, and `keep` lines list the links that were already right.
+   `link`, `unlink`, `relink`, `replace`, `delete`. With `--verbose` each line is one link with its path, `keep` lines list the links that were already right, and `enable` and `disable` lines group the changed skills and servers by pack.
    `nothing to change` means the state already matched. Handle `conflict`, `missing` and `extra`
    lines as described below.
 

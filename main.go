@@ -14,6 +14,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/bonkey/skillet/internal/app"
+	"github.com/bonkey/skillet/internal/catalog"
 	"github.com/bonkey/skillet/internal/link"
 	"github.com/bonkey/skillet/internal/mcp"
 	"github.com/bonkey/skillet/internal/paths"
@@ -128,9 +129,10 @@ func tilde(text string) string {
 }
 
 // printSync prints one line per kind of change, and every change with
-// --verbose, followed by what was already right. Problems are always
+// --verbose, followed by what was already right and by the packs the
+// enabled and disabled skills and servers belong to. Problems are always
 // printed in full.
-func printSync(report app.SyncReport) {
+func printSync(cat *catalog.Catalog, report app.SyncReport) {
 	skills, servers := map[string][]string{}, map[string]map[string][]string{}
 	var files []string // config files in the order the agents were visited
 	for _, action := range report.Actions {
@@ -160,6 +162,7 @@ func printSync(report app.SyncReport) {
 		for _, action := range report.KeptMCP {
 			fmt.Println(tilde(action.String()))
 		}
+		printMembership(cat, report)
 	}
 	scope := tilde(report.Scope.String())
 	if !verbose {
@@ -192,6 +195,61 @@ func printSync(report app.SyncReport) {
 	}
 }
 
+// printMembership prints, per pack, the skills and servers that a report
+// enables or disables; those in no pack are listed by their own name.
+func printMembership(cat *catalog.Catalog, report app.SyncReport) {
+	on, off := map[string]bool{}, map[string]bool{}
+	for _, action := range report.Actions {
+		switch action.Op {
+		case link.OpLink, link.OpReplace:
+			on[action.Name] = true
+		case link.OpUnlink:
+			off[action.Name] = true
+		}
+	}
+	for _, action := range report.MCP {
+		switch action.Op {
+		case mcp.OpAdd:
+			on[catalog.MCPPrefix+action.Name] = true
+		case mcp.OpRemove:
+			off[catalog.MCPPrefix+action.Name] = true
+		}
+	}
+	scope := tilde(report.Scope.String())
+	for _, group := range []struct {
+		op    string
+		names map[string]bool
+	}{{"enable", on}, {"disable", off}} {
+		loose := map[string]bool{}
+		for name := range group.names {
+			loose[name] = true
+		}
+		for _, pack := range cat.PackNames() {
+			set := catalog.Set{Packs: []string{pack}}
+			var members []string
+			for _, skill := range cat.Resolve(set) {
+				if group.names[skill] {
+					members = append(members, skill)
+					delete(loose, skill)
+				}
+			}
+			for _, server := range cat.ResolveMCPs(set) {
+				if group.names[catalog.MCPPrefix+server] {
+					members = append(members, catalog.MCPPrefix+server)
+					delete(loose, catalog.MCPPrefix+server)
+				}
+			}
+			if len(members) > 0 {
+				sort.Strings(members)
+				fmt.Printf("%-8s %s: @%s: %s\n", group.op, scope, pack, strings.Join(members, ", "))
+			}
+		}
+		if len(loose) > 0 {
+			fmt.Printf("%-8s %s: %s\n", group.op, scope, strings.Join(sortedKeys(loose), ", "))
+		}
+	}
+}
+
 func importCmd() *cobra.Command {
 	var dryRun bool
 	var lock string
@@ -220,7 +278,7 @@ placeholders and kept in secrets.toml. Review with --dry-run first.`,
 			if err != nil {
 				return err
 			}
-			printSync(report.Sync)
+			printSync(a.Catalog, report.Sync)
 			for _, old := range sortedKeys(report.Renamed) {
 				fmt.Printf("renamed  %s is called %s in its source; the link named %[1]s stays in place\n", old, report.Renamed[old])
 			}
@@ -275,7 +333,7 @@ back with the next sync.`}
 			return err
 		}
 		report, err := a.Toggle(s, enable, save, args...)
-		printSync(report)
+		printSync(a.Catalog, report)
 		if err == nil && len(report.Actions)+len(report.MCP)+len(report.Missing)+len(report.MissingSecrets) == 0 {
 			fmt.Println("nothing to change in", tilde(s.String()))
 		}
@@ -334,7 +392,7 @@ with --dry-run first.`,
 		for _, s := range scopes {
 			report, err := a.Sync(s, app.SyncOptions{DryRun: dryRun, Remove: clean, DisableAll: disableAll,
 				DisableSkills: disableSkills, DisableMCPs: disableMCPs, Purge: purge})
-			printSync(report)
+			printSync(a.Catalog, report)
 			if err != nil {
 				return err
 			}
@@ -458,7 +516,7 @@ func updateCmd() *cobra.Command {
 				return err
 			}
 			updates, err := a.Update(check)
-			printSync(a.LastSync)
+			printSync(a.Catalog, a.LastSync)
 			failed := 0
 			for _, u := range updates {
 				switch {
@@ -611,7 +669,7 @@ so gists that include each other do no harm.`,
 			for _, warning := range a.Warnings {
 				fmt.Fprintln(os.Stderr, "warning:", warning)
 			}
-			printSync(a.LastSync)
+			printSync(a.Catalog, a.LastSync)
 			fmt.Printf(done+"\n", id)
 			return nil
 		}
