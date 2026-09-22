@@ -94,8 +94,10 @@ project: say so, and offer to disable it globally and enable it with `-p` in the
 
    Disabling one skill of a pack leaves the pack's other skills enabled.
 
-4. Read the output. Each line is one kind of change with the scope and the names it covers:
-   `link`, `unlink`, `relink`, `replace`, `delete`. With `--verbose` each line is one link with its path, `keep` lines list the links that were already right, `enabled` lines group what is on by pack, `enable` and `disable` lines the change, and `off` names the packs with nothing on.
+4. Read the output. It is a table headed by the scope: one row per skill, named by its folder
+   inside the clones, and per server as `mcp:name`, and one column per agent. A cell is `ok`
+   already right, `+` added, `~` repaired, `x` removed, `!` a conflict, or `-` where the agent
+   has no such directory or config; a legend follows. With `--verbose` each line is one link with its path, `keep` lines list the links that were already right, `enabled` lines group what is on by pack, `enable` and `disable` lines the change, and `off` names the packs with nothing on.
    `nothing to change` means the state already matched. Handle `conflict`, `missing` and `extra`
    lines as described below.
 
@@ -106,9 +108,9 @@ project: say so, and offer to disable it globally and enable it with `-p` in the
 - Servers are global. `-p` does not take them; a pack enabled with `-p` links its skills and
   prints a `note` naming the servers it skipped. Enable those globally, or suggest `skillet run`.
 - `skillet enable mcp:tavily` and `skillet disable mcp:tavily` write and remove the server in the
-  user config of every configured agent. Lines start with `mcp-add`, `mcp-update`, `mcp-remove` or `mcp-delete`
-  and name the config file and the servers, one line per file; with `--verbose` there is one
-  line per server entry.
+  user config of every configured agent. The servers are the `mcp:name` rows of the table, with
+  a cell per agent; with `--verbose` there is one `mcp-add`, `mcp-update`, `mcp-remove`,
+  `mcp-delete` or `mcp-keep` line per server entry, naming the config file.
   An entry of the same name that is already in an agent's config is overwritten with the
   catalog's definition.
 - An agent loads its servers at start. Tell the user that the change takes effect in the next
