@@ -224,6 +224,7 @@ func shortAgent(name string) string {
 // printTable prints two tables: one row per skill, named by its folder
 // inside the clones, with a column per agent that has a skills directory,
 // and one row per server with a column per agent that has an MCP config.
+// Rows are grouped by pack; a row in several packs shows under the first.
 func printTable(a *app.App, report app.SyncReport) {
 	repos := a.Paths.ReposDir() + string(filepath.Separator)
 	var dirs, files []column
@@ -242,6 +243,7 @@ func printTable(a *app.App, report app.SyncReport) {
 		}
 	}
 	skills, servers := map[string]map[string]mark{}, map[string]map[string]mark{}
+	names := map[string]string{} // skill row label to skill name
 	for _, action := range slices.Concat(report.Actions, report.Kept) {
 		label := action.Name
 		if action.Target != "" {
@@ -249,6 +251,7 @@ func printTable(a *app.App, report app.SyncReport) {
 		} else if found, ok := a.Index.Lookup(a.Catalog, action.Name); ok {
 			label = strings.TrimPrefix(found.Dir, repos)
 		}
+		names[label] = action.Name
 		place(skills, dirs, label, action.Dir, markOf(action.Op))
 	}
 	for _, action := range slices.Concat(report.MCP, report.KeptMCP) {
@@ -277,21 +280,31 @@ func printTable(a *app.App, report app.SyncReport) {
 		for label := range table.rows {
 			width = max(width, len(label))
 		}
+		width += 2 // rows are indented below their pack
 		fmt.Printf("%-*s", width, table.title)
 		for _, col := range table.columns {
 			fmt.Printf("  %s", shortAgent(col.name))
 		}
 		fmt.Println()
-		for _, label := range sortedKeys(table.rows) {
-			fmt.Printf("%-*s", width, label)
-			for _, col := range table.columns {
-				cell := table.rows[label][col.name]
-				used[cell] = true
-				name, span := shortAgent(col.name), lipgloss.Width(glyphs[cell])
-				pad := (len(name) - span) / 2
-				fmt.Printf("  %*s%s%*s", pad, "", glyphStyles[cell].Render(glyphs[cell]), len(name)-pad-span, "")
+		skillTable := table.title == scope+" skills"
+		for _, group := range groupByPack(a.Catalog, sortedKeys(table.rows), func(label string) (string, bool) {
+			if skillTable {
+				return names[label], false
 			}
-			fmt.Println()
+			return label, true
+		}) {
+			fmt.Println(styleHeading.Render(group.pack))
+			for _, label := range group.rows {
+				fmt.Printf("  %-*s", width-2, label)
+				for _, col := range table.columns {
+					cell := table.rows[label][col.name]
+					used[cell] = true
+					name, span := shortAgent(col.name), lipgloss.Width(glyphs[cell])
+					pad := (len(name) - span) / 2
+					fmt.Printf("  %*s%s%*s", pad, "", glyphStyles[cell].Render(glyphs[cell]), len(name)-pad-span, "")
+				}
+				fmt.Println()
+			}
 		}
 	}
 	if !printed {
@@ -304,6 +317,46 @@ func printTable(a *app.App, report app.SyncReport) {
 		}
 	}
 	fmt.Println(glyphStyles[markNone].Render(strings.Join(legend, "   ")))
+}
+
+var styleHeading = lipgloss.NewStyle().Bold(true)
+
+type packRows struct {
+	pack string
+	rows []string
+}
+
+// groupByPack sorts rows into the packs of the catalog, in pack name order.
+// name gives a row's skill or server name, and whether it is a server. A row
+// in several packs goes to the first; rows in no pack come last.
+func groupByPack(cat *catalog.Catalog, rows []string, name func(string) (string, bool)) []packRows {
+	var groups []packRows
+	placed := map[string]bool{}
+	for _, pack := range cat.PackNames() {
+		set := catalog.Set{Packs: []string{pack}}
+		skills, servers := cat.Resolve(set), cat.ResolveMCPs(set)
+		group := packRows{pack: "@" + pack}
+		for _, row := range rows {
+			n, server := name(row)
+			if !placed[row] && (server && slices.Contains(servers, n) || !server && slices.Contains(skills, n)) {
+				placed[row] = true
+				group.rows = append(group.rows, row)
+			}
+		}
+		if len(group.rows) > 0 {
+			groups = append(groups, group)
+		}
+	}
+	rest := packRows{pack: "no pack"}
+	for _, row := range rows {
+		if !placed[row] {
+			rest.rows = append(rest.rows, row)
+		}
+	}
+	if len(rest.rows) > 0 {
+		groups = append(groups, rest)
+	}
+	return groups
 }
 
 // column is an agent in a sync table, with the directory or config file

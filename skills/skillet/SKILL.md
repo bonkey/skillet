@@ -96,7 +96,8 @@ project: say so, and offer to disable it globally and enable it with `-p` in the
 
 4. Read the output. It is two tables headed by the scope: `skills` with one row per skill, named
    by its folder inside the clones, and `mcp` with one row per server, each with one column per
-   agent that has a skills directory or an MCP config. A cell is `ok` already right, `+` added,
+   agent that has a skills directory or an MCP config. Rows are grouped under `@pack` lines, and
+   those in no pack under `no pack`. A cell is `ok` already right, `+` added,
    `~` repaired, `x` removed, `!` a conflict, or `-` where the agent lacks the entry; a legend
    follows. With `--verbose` each line is one link with its path, `keep` lines list the links that were already right, `enabled` lines group what is on by pack, `enable` and `disable` lines the change, and `off` names the packs with nothing on.
    `nothing to change` means the state already matched. Handle `conflict`, `missing` and `extra`
