@@ -196,9 +196,10 @@ func printSync(cat *catalog.Catalog, report app.SyncReport) {
 }
 
 // printMembership prints, per pack, the skills and servers that a report
-// enables or disables; those in no pack are listed by their own name.
+// finds enabled, enables or disables; those in no pack are listed by their
+// own name. In the global scope, the packs with nothing on are listed as off.
 func printMembership(cat *catalog.Catalog, report app.SyncReport) {
-	on, off := map[string]bool{}, map[string]bool{}
+	kept, on, off := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for _, action := range report.Actions {
 		switch action.Op {
 		case link.OpLink, link.OpReplace:
@@ -206,6 +207,9 @@ func printMembership(cat *catalog.Catalog, report app.SyncReport) {
 		case link.OpUnlink:
 			off[action.Name] = true
 		}
+	}
+	for _, action := range report.Kept {
+		kept[action.Name] = true
 	}
 	for _, action := range report.MCP {
 		switch action.Op {
@@ -215,11 +219,15 @@ func printMembership(cat *catalog.Catalog, report app.SyncReport) {
 			off[catalog.MCPPrefix+action.Name] = true
 		}
 	}
+	for _, action := range report.KeptMCP {
+		kept[catalog.MCPPrefix+action.Name] = true
+	}
 	scope := tilde(report.Scope.String())
+	active := map[string]bool{}
 	for _, group := range []struct {
 		op    string
 		names map[string]bool
-	}{{"enable", on}, {"disable", off}} {
+	}{{"enabled", kept}, {"enable", on}, {"disable", off}} {
 		loose := map[string]bool{}
 		for name := range group.names {
 			loose[name] = true
@@ -242,10 +250,24 @@ func printMembership(cat *catalog.Catalog, report app.SyncReport) {
 			if len(members) > 0 {
 				sort.Strings(members)
 				fmt.Printf("%-8s %s: @%s: %s\n", group.op, scope, pack, strings.Join(members, ", "))
+				if group.op != "disable" {
+					active[pack] = true
+				}
 			}
 		}
 		if len(loose) > 0 {
 			fmt.Printf("%-8s %s: %s\n", group.op, scope, strings.Join(sortedKeys(loose), ", "))
+		}
+	}
+	if !report.Scope.Project {
+		var idle []string
+		for _, pack := range cat.PackNames() {
+			if !active[pack] {
+				idle = append(idle, "@"+pack)
+			}
+		}
+		if len(idle) > 0 {
+			fmt.Printf("%-8s %s: %s\n", "off", scope, strings.Join(idle, ", "))
 		}
 	}
 }
