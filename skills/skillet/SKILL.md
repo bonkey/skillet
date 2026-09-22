@@ -42,7 +42,7 @@ matching servers the same way, with their command or URL as `target`.
 - Run `skillet` only with a subcommand. Bare `skillet` opens an interactive TUI that an agent cannot drive.
 - Read the catalog with `skillet list --json`. Take skill and pack names from that output; never guess them.
 - To switch a skill off, use `disable`. The catalog is the user's `config.toml`: do not edit it without the user's consent, and add `--save` only when the user asks for a lasting change.
-- Never add `--force`, `--purge` or `--clear` on your own. `--force` deletes whatever stands in the way of a link, `sync --purge` deletes the skills and servers skillet does not manage, and `sync --clear` disables everything it manages. When a command prints a `conflict` line, show it to the user and ask.
+- Never add `--force`, `--purge`, `--disable-all`, `--disable-skills` or `--disable-mcps` on your own. `--force` deletes whatever stands in the way of a link, `sync --purge` deletes the skills and servers skillet does not manage, `sync --disable-all` disables everything it manages, and `--disable-skills` and `--disable-mcps` one kind of it. When a command prints a `conflict` line, show it to the user and ask.
 - Adding skills to the catalog is the user's decision: it holds skills the user has evaluated. Propose the lines for `~/.config/skillet/config.toml` and wait for a yes.
 - Do not pass `--agents` unless the user asks to act on certain agents only.
 - Agents read their skills directories when a session starts. After a change, tell the user that a skill that does not show up yet is available in the next session.

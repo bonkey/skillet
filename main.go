@@ -285,7 +285,7 @@ back with the next sync.`}
 }
 
 func syncCmd() *cobra.Command {
-	var dryRun, remove, clear, purge bool
+	var dryRun, remove, disableAll, purge, disableSkills, disableMCPs bool
 	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Enable what the config files switch on and repair the links (global and the project)",
@@ -296,16 +296,21 @@ project's .skillet.toml switches on its own entries. Sources without a clone
 are cloned, every agent directory gets the same links, and a link follows a
 skill that moved inside its source. What is enabled although its config
 file switches it off stays and is reported as "extra"; --remove disables it.
---clear disables everything skillet manages in the scope, and --purge deletes
-the skills and servers skillet does not manage from the agents' directories
-and configs, so that they hold the catalog and nothing else. Both are meant
-to be tried with --dry-run first.`,
+--disable-skills unlinks every skill skillet manages in the scope and
+--disable-mcps removes every server entry it manages, except those of running
+sessions; --disable-all is both. The config files stay as they are, so the next
+plain sync enables it all again. --purge deletes the skills and servers
+skillet does not manage from the agents' directories and configs, so that
+they hold the catalog and nothing else. All of them are meant to be tried
+with --dry-run first.`,
 		Args: cobra.NoArgs,
 	}
 	scope := scopeFlags(cmd)
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "only print what would change")
 	cmd.Flags().BoolVar(&remove, "remove", false, "disable what the config file switches off")
-	cmd.Flags().BoolVar(&clear, "clear", false, "disable everything skillet manages in the scope")
+	cmd.Flags().BoolVar(&disableSkills, "disable-skills", false, "unlink every skill skillet manages in the scope")
+	cmd.Flags().BoolVar(&disableMCPs, "disable-mcps", false, "remove every server entry skillet manages from the agents' configs")
+	cmd.Flags().BoolVar(&disableAll, "disable-all", false, "both --disable-skills and --disable-mcps")
 	cmd.Flags().BoolVar(&purge, "purge", false, "delete the skills and servers skillet does not manage from the agents")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		a, err := open()
@@ -316,6 +321,9 @@ to be tried with --dry-run first.`,
 		if err != nil {
 			return err
 		}
+		if disableMCPs && chosen.Project {
+			return errors.New("MCP servers are global: --disable-mcps needs the global scope")
+		}
 		scopes := []app.Scope{chosen}
 		if !cmd.Flags().Changed("global") && !cmd.Flags().Changed("project") {
 			if project, err := a.ProjectScope(); err == nil {
@@ -324,7 +332,8 @@ to be tried with --dry-run first.`,
 		}
 		verbose = verbose || dryRun
 		for _, s := range scopes {
-			report, err := a.Sync(s, app.SyncOptions{DryRun: dryRun, Remove: remove, Clear: clear, Purge: purge})
+			report, err := a.Sync(s, app.SyncOptions{DryRun: dryRun, Remove: remove, DisableAll: disableAll,
+				DisableSkills: disableSkills, DisableMCPs: disableMCPs, Purge: purge})
 			printSync(report)
 			if err != nil {
 				return err

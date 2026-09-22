@@ -249,14 +249,53 @@ func TestSyncClearAndPurge(t *testing.T) {
 		t.Fatal("purge leaves what skillet manages")
 	}
 
-	if _, err := e.app.Sync(e.app.Global(), SyncOptions{Clear: true}); err != nil {
+	if _, err := e.app.Sync(e.app.Global(), SyncOptions{DisableAll: true}); err != nil {
 		t.Fatal(err)
 	}
 	if isLink(filepath.Join(global, "alpha")) || strings.Contains(read(t, claude), "simctl") {
-		t.Fatal("clear disables everything skillet manages")
+		t.Fatal("disable-all disables everything skillet manages")
 	}
 	if report, _ := e.app.Sync(e.app.Global(), SyncOptions{}); len(report.Actions)+len(report.MCP) != 0 {
 		t.Errorf("both packs are off in the config, so a plain sync changes nothing: %+v", report)
+	}
+}
+
+func TestSyncDisablesOneKind(t *testing.T) {
+	e := setup(t)
+	withServers(t, &e)
+	on := true
+	e.app.Local.Packs["ios"].Enabled = &on
+	if err := e.app.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.app.Sync(e.app.Global(), SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	alpha, claude := filepath.Join(e.p.Home, ".claude", "skills", "alpha"), filepath.Join(e.p.Home, ".claude.json")
+	if !isLink(alpha) || !strings.Contains(read(t, claude), "simctl") {
+		t.Fatal("the pack is on: its skill is linked and its server written")
+	}
+
+	report, err := e.app.Sync(e.app.Global(), SyncOptions{DisableMCPs: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !isLink(alpha) || strings.Contains(read(t, claude), "simctl") {
+		t.Fatal("DisableMCPs removes the servers and leaves the links")
+	}
+	if len(report.Extra) != 0 || len(report.Notes) != 1 || !strings.Contains(report.Notes[0], "mcp:simctl, mcp:tavily: on in") {
+		t.Errorf("the removed servers are not extra, and a note says the config switches them on: %+v", report)
+	}
+
+	report, err = e.app.Sync(e.app.Global(), SyncOptions{DisableSkills: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if isLink(alpha) || !strings.Contains(read(t, claude), "simctl") {
+		t.Fatal("DisableSkills unlinks the skills and writes the servers back")
+	}
+	if len(report.Notes) != 1 || !strings.Contains(report.Notes[0], "alpha: on in") {
+		t.Errorf("a note names the unlinked skills: %+v", report)
 	}
 }
 

@@ -212,8 +212,14 @@ type SyncOptions struct {
 	DryRun bool
 	// Remove disables what is enabled on the disk but not declared.
 	Remove bool
-	// Clear disables everything skillet manages in the scope.
-	Clear bool
+	// DisableAll disables everything skillet manages in the scope: both of
+	// the kinds below.
+	DisableAll bool
+	// DisableSkills unlinks every skill skillet manages in the scope.
+	DisableSkills bool
+	// DisableMCPs removes every server entry skillet manages, except
+	// those of running sessions.
+	DisableMCPs bool
 	// Purge deletes the skills and servers skillet does not manage from
 	// the agents' directories and configs.
 	Purge bool
@@ -232,7 +238,10 @@ type SyncOptions struct {
 // sync as their last step.
 func (a *App) Sync(scope Scope, opt SyncOptions) (SyncReport, error) {
 	var failed []string
-	if !opt.DryRun && !opt.Clear {
+	if opt.DisableAll {
+		opt.DisableSkills, opt.DisableMCPs = true, true
+	}
+	if !opt.DryRun && !opt.DisableSkills {
 		var err error
 		if failed, err = a.cloneMissing(); err != nil {
 			return SyncReport{Scope: scope}, err
@@ -247,11 +256,20 @@ func (a *App) Sync(scope Scope, opt SyncOptions) (SyncReport, error) {
 		opt.Remove = false
 	}
 	declared := a.Declared(scope)
-	if opt.Clear {
+	if opt.DisableAll {
 		declared, opt.Remove = catalog.Set{}, true
 	}
 	skills, servers := a.Catalog.Resolve(declared), a.Catalog.ResolveMCPs(declared)
-	var extra []string
+	var extra, back []string
+	if opt.DisableSkills {
+		back, skills, own.Skills = append(back, skills...), nil, nil
+	}
+	if opt.DisableMCPs {
+		for _, server := range servers {
+			back = append(back, catalog.MCPPrefix+server)
+		}
+		servers, own.MCPs = nil, nil
+	}
 	for _, skill := range own.Skills {
 		if !slices.Contains(skills, skill) {
 			extra = append(extra, skill)
@@ -270,6 +288,10 @@ func (a *App) Sync(scope Scope, opt SyncOptions) (SyncReport, error) {
 	report, err := a.apply(scope, enabling{declared, skills, servers}, opt)
 	if !opt.Remove && (!scope.Project || a.Project != nil) {
 		report.Extra = extra
+	}
+	if len(back) > 0 && !opt.DisableAll {
+		report.Notes = append(report.Notes, fmt.Sprintf("%s: on in %s, so `skillet sync` enables them again; `disable --save` switches them off there",
+			strings.Join(back, ", "), a.configOf(scope)))
 	}
 	report.Notes = append(report.Notes, failed...)
 	return report, err

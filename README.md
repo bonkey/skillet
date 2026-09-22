@@ -73,8 +73,8 @@ Archives for macOS and Linux are attached to each
    ```
 
    Skills installed by hand and servers the catalog does not know stay until you say so. `sync
-   --purge` deletes them from the agents, `sync --clear` takes out everything skillet manages,
-   and both accept `--dry-run`:
+   --purge` deletes them from the agents, `sync --disable-all` takes out everything skillet manages,
+   `--disable-skills` and `--disable-mcps` one kind of it, and all accept `--dry-run`:
 
    ```sh
    skillet sync --purge --dry-run           # what would go
@@ -102,7 +102,8 @@ skillet run @craft -- claude             # only while the command runs
 skillet sync                             # enable what the config files switch on, repair the links
 skillet sync --remove                    # and disable what they switch off
 skillet sync --purge                     # and delete the skills and servers skillet does not manage
-skillet sync --clear                     # disable everything skillet manages
+skillet sync --disable-mcps              # remove every server entry skillet manages; the config still switches them on
+skillet sync --disable-all               # disable everything skillet manages
 
 skillet list 'swift|ios' --enabled       # search names and descriptions; terms may be regexps
 skillet sources                          # every source with the ref it tracks and its commit
