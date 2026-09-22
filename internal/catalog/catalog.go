@@ -69,6 +69,9 @@ type Catalog struct {
 	Sources map[string]*Source `toml:"-"`
 	MCPs    map[string]*MCP    `toml:"-"`
 	Packs   map[string]*Pack   `toml:"-"`
+	// Enabled and Disabled are the name lists of an overlay; see Override.
+	Enabled  []string `toml:"-"`
+	Disabled []string `toml:"-"`
 
 	// SkillOrigin, SourceOrigin, MCPOrigin and PackOrigin name the gist an
 	// entry of a merged catalog was included from. Entries of the local
@@ -99,6 +102,8 @@ type fileCatalog struct {
 	Packs    []*filePack   `toml:"packs,omitempty"`
 	Skills   []*fileSource `toml:"skills,omitempty"`
 	MCPs     []*MCP        `toml:"mcps,omitempty"`
+	Enabled  []string      `toml:"enabled,omitempty"`
+	Disabled []string      `toml:"disabled,omitempty"`
 }
 
 // filePack is a [[packs]] entry: a pack with the name it goes by.
@@ -172,9 +177,31 @@ func Load(file string) (*Catalog, error) {
 	return c, nil
 }
 
+// LoadOverlay reads the file that overrides the catalog on this machine;
+// nil without one.
+func LoadOverlay(file string) (*Catalog, error) {
+	data, err := os.ReadFile(file)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	c, err := parse(data, true)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", file, err)
+	}
+	return c, nil
+}
+
 // Parse reads a catalog file. Sources and servers get their names, and
 // servers are validated.
-func Parse(data []byte) (*Catalog, error) {
+func Parse(data []byte) (*Catalog, error) { return parse(data, false) }
+
+// parse reads a catalog file, or an overlay: the same shape, plus the
+// `enabled` and `disabled` name lists, without `gist` and `includes`, and
+// with `agents` absent when the file has none.
+func parse(data []byte, overlay bool) (*Catalog, error) {
 	var f fileCatalog
 	if err := toml.Unmarshal(data, &f); err != nil {
 		return nil, err
@@ -183,6 +210,14 @@ func Parse(data []byte) (*Catalog, error) {
 	c.Gist, c.Includes, c.Secrets = f.Gist, f.Includes, f.Secrets
 	if f.Agents != nil {
 		c.Agents = f.Agents
+	}
+	if overlay {
+		if f.Gist != "" || len(f.Includes) > 0 {
+			return nil, errors.New("gist and includes belong in config.toml")
+		}
+		c.Agents, c.Enabled, c.Disabled = f.Agents, f.Enabled, f.Disabled
+	} else if len(f.Enabled)+len(f.Disabled) > 0 {
+		return nil, errors.New("the enabled and disabled lists belong in config.local.toml")
 	}
 	for i, entry := range f.Packs {
 		if entry.Name == "" {
@@ -732,6 +767,67 @@ func Merge(local *Catalog, ids []string, included []*Catalog) (*Catalog, error) 
 		}
 	}
 	return merged, nil
+}
+
+// Overlay returns base with the entries of over: a same-named source,
+// server or pack replaces the one in base, the others are added, the
+// secrets are appended, and agents are taken when over lists them.
+func Overlay(base, over *Catalog) (*Catalog, error) {
+	data, err := base.Encode()
+	if err != nil {
+		return nil, err
+	}
+	c, err := Parse(data)
+	if err != nil {
+		return nil, err
+	}
+	for name, src := range over.Sources {
+		copied := *src
+		copied.Skills, copied.Disabled = slices.Clone(src.Skills), slices.Clone(src.Disabled)
+		c.Sources[name] = &copied
+	}
+	for name, def := range over.MCPs {
+		copied := *def
+		c.MCPs[name] = &copied
+	}
+	for name, pack := range over.Packs {
+		c.Packs[name] = &Pack{Description: pack.Description, Enabled: pack.Enabled,
+			Skills: slices.Clone(pack.Skills), MCPs: slices.Clone(pack.MCPs)}
+	}
+	c.Secrets = append(c.Secrets, over.Secrets...)
+	if over.Agents != nil {
+		c.Agents = over.Agents
+	}
+	return c, nil
+}
+
+// Override switches the named entries on, then off: skills, servers
+// ("mcp:name"), packs ("@name") and sources ("skills:name"). A name in both
+// lists ends up off. A name the catalog does not know is an error.
+func (c *Catalog) Override(enabled, disabled []string) error {
+	if err := c.Check(append(slices.Clone(enabled), disabled...)); err != nil {
+		return err
+	}
+	for i, names := range [][]string{enabled, disabled} {
+		on := i == 0
+		for _, name := range names {
+			if kind, _ := kindOf(name); kind != kindSkill {
+				if err := c.SetFlag(name, on); err != nil {
+					return err
+				}
+				continue
+			}
+			skill, _ := SplitRef(name)
+			source, _ := c.SourceOf(skill)
+			src := c.Sources[source]
+			if on {
+				src.Disabled = remove(src.Disabled, skill)
+			} else {
+				src.Disabled = add(src.Disabled, skill)
+			}
+		}
+	}
+	return nil
 }
 
 func sortedKeys[V any](m map[string]V) []string {

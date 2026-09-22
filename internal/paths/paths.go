@@ -44,8 +44,11 @@ func Default() (Paths, error) {
 // ConfigFile holds the catalog, the 1Password items, the agents and the
 // global enabled set.
 func (p Paths) ConfigFile() string { return filepath.Join(p.Config, "config.toml") }
-func (p Paths) ReposDir() string   { return filepath.Join(p.Data, "repos") }
-func (p Paths) IndexFile() string  { return filepath.Join(p.Data, "index.json") }
+
+// LocalConfigFile overrides the catalog on this machine. It is never pushed.
+func (p Paths) LocalConfigFile() string { return filepath.Join(p.Config, "config.local.toml") }
+func (p Paths) ReposDir() string        { return filepath.Join(p.Data, "repos") }
+func (p Paths) IndexFile() string       { return filepath.Join(p.Data, "index.json") }
 
 // SecretsFile holds the values of ${NAME} placeholders. It is never pushed.
 func (p Paths) SecretsFile() string { return filepath.Join(p.Config, "secrets.toml") }

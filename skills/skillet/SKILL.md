@@ -57,7 +57,8 @@ matching servers the same way, with their command or URL as `target`.
 Every entry of `~/.config/skillet/config.toml`, and of a project's `.skillet.toml`, is on unless
 it carries `enabled = false`. `skillet sync` enables what is on again, so disabling such an entry
 lasts until the next sync, and the command prints a `note` that says so. `disable --save` switches
-it off in the file for good; do that only when the user asks for it.
+it off in the file for good; do that only when the user asks for it. `~/.config/skillet/config.local.toml`,
+when present, overrides `config.toml` on this machine; it is the user's file too, never edit it.
 
 When the request names no scope, prefer `-p` for skills a task needs and the global scope for
 skills the user wants in general. Ask when the choice matters and is unclear.

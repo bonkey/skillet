@@ -299,6 +299,53 @@ func TestSyncDisablesOneKind(t *testing.T) {
 	}
 }
 
+func TestLocalOverlay(t *testing.T) {
+	e := setup(t)
+	withServers(t, &e)
+	write(t, e.p.LocalConfigFile(), `
+enabled = ["@ios"]
+disabled = ["beta", "mcp:tavily"]
+
+[[packs]]
+name = "mine"
+description = "Only here"
+skills = ["alpha"]
+
+[[mcps]]
+name = "simctl"
+command = ["uvx", "simctl-mcp"]
+`)
+	e.open(t, read(t, e.p.ConfigFile()))
+	a := e.app
+	global := filepath.Join(e.p.Home, ".claude", "skills")
+	if !isLink(filepath.Join(global, "alpha")) || isLink(filepath.Join(global, "beta")) {
+		t.Fatal("the overlay switches the pack on and beta off")
+	}
+	if !strings.Contains(read(t, filepath.Join(e.p.Home, ".claude.json")), "uvx") {
+		t.Error("the overlay's server definition replaces the catalog's")
+	}
+	if got := a.Declared(a.Global()); !reflect.DeepEqual(got.MCPs, []string{"simctl"}) {
+		t.Errorf("a disabled server is off: %+v", got)
+	}
+	if a.Catalog.Packs["mine"] == nil || a.Local.Packs["mine"] != nil {
+		t.Error("the overlay's pack is in the merged catalog and not in the file that is saved")
+	}
+	if _, err := a.Toggle(a.Global(), false, true, "@mine"); err == nil || !strings.Contains(err.Error(), "config.local.toml") {
+		t.Errorf("--save refuses an entry of the overlay: %v", err)
+	}
+	if _, err := a.Toggle(a.Global(), false, true, "@ios"); err == nil || !strings.Contains(err.Error(), "listed in") {
+		t.Errorf("--save refuses a name the overlay's lists decide: %v", err)
+	}
+	if _, err := a.Toggle(a.Global(), false, true, "alpha"); err != nil || !strings.Contains(read(t, e.p.ConfigFile()), "enabled = false") {
+		t.Errorf("--save writes config.toml for the entries the overlay leaves alone: %v", err)
+	}
+
+	write(t, e.p.LocalConfigFile(), "enabled = ['@nope']\n")
+	if _, err := OpenWith(e.p, a.Gists); err == nil || !strings.Contains(err.Error(), "config.local.toml") || !strings.Contains(err.Error(), "nope") {
+		t.Errorf("an unknown name names the file: %v", err)
+	}
+}
+
 func TestViewFilter(t *testing.T) {
 	view := View{
 		Packs: []PackView{

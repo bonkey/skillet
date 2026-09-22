@@ -26,6 +26,9 @@ type App struct {
 	Paths paths.Paths
 	// Local is the user's own catalog: the only one that is edited and saved.
 	Local *catalog.Catalog
+	// Overlay is config.local.toml, or nil without one. Its entries replace
+	// Local's in Catalog, and its lists switch entries on and off there.
+	Overlay *catalog.Catalog
 	// Project is the catalog in the project's manifest, or nil without one.
 	Project *catalog.Catalog
 	// Catalog is Local merged with the included gists and with Project.
@@ -58,6 +61,9 @@ func OpenWith(p paths.Paths, client gist.Client) (*App, error) {
 		return nil, err
 	}
 	a := &App{Paths: p, Local: local, Gists: client, OnePassword: secrets.OP{}}
+	if a.Overlay, err = catalog.LoadOverlay(p.LocalConfigFile()); err != nil {
+		return nil, err
+	}
 	if root, ok := p.ProjectRoot(); ok {
 		manifest := filepath.Join(root, paths.ManifestName)
 		if _, err := os.Stat(manifest); err == nil {
@@ -83,14 +89,17 @@ func (a *App) Save() error {
 func (a *App) Reindex() error {
 	idx, err := source.LoadIndex(a.Paths, a.Catalog)
 	a.Index = idx
-	a.expand()
+	if expandErr := a.expand(); err == nil {
+		err = expandErr
+	}
 	return err
 }
 
-// expand gives the sources that take all skills the names their clones offer.
-func (a *App) expand() {
+// expand gives the sources that take all skills the names their clones
+// offer, and then applies the overlay's lists, which may name those skills.
+func (a *App) expand() error {
 	if a.Index == nil {
-		return
+		return nil
 	}
 	offered := map[string][]string{}
 	for name, indexed := range a.Index.Sources {
@@ -99,6 +108,13 @@ func (a *App) expand() {
 		}
 	}
 	a.Catalog.ExpandAll(offered)
+	if a.Overlay == nil {
+		return nil
+	}
+	if err := a.Catalog.Override(a.Overlay.Enabled, a.Overlay.Disabled); err != nil {
+		return fmt.Errorf("%s: %w", a.Paths.LocalConfigFile(), err)
+	}
+	return nil
 }
 
 // Scope is where skills get enabled: globally, or in one project.
@@ -479,7 +495,7 @@ func (a *App) resolver() (*secrets.Resolver, error) {
 		local[name] = value
 	}
 	r := &secrets.Resolver{Local: local, Reader: a.OnePassword}
-	for _, item := range a.Local.Secrets {
+	for _, item := range a.Catalog.Secrets {
 		r.Items = append(r.Items, secrets.Item{Account: item.Account, Vault: item.Vault, Item: item.Item})
 	}
 	return r, nil
@@ -588,6 +604,14 @@ func (a *App) saveFlags(scope Scope, on bool, names []string) error {
 		target, file, own = a.Project, a.configOf(scope), paths.ManifestName
 	}
 	for _, name := range names {
+		// The overlay wins over the file, so a flag the overlay decides
+		// is set there.
+		if a.Overlay != nil && a.Overlay.Check([]string{name}) == nil {
+			return fmt.Errorf("%s is defined in %s; set its flag there", name, a.Paths.LocalConfigFile())
+		}
+		if a.Overlay != nil && (slices.Contains(a.Overlay.Enabled, name) || slices.Contains(a.Overlay.Disabled, name)) {
+			return fmt.Errorf("%s is listed in %s; change it there", name, a.Paths.LocalConfigFile())
+		}
 		if origin := a.originOf(name); origin != own {
 			switch {
 			case origin != "" && origin != paths.ManifestName:

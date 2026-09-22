@@ -212,7 +212,27 @@ item = "klmnopqrst"
 - **Gists**: `gist = "<id>"` names the gist `gist push` and `gist pull` use; `includes = ["<id>"]`
   merges other catalogs into yours. Your own entries win a name clash, then the earlier include.
   Gists may include gists; each takes part once, so cycles are harmless. The `secrets` of an
-  included gist are ignored.
+  included gist are ignored. `config.local.toml` stays on the machine: `gist push` does not send
+  it and `gist pull` does not touch it.
+
+### Local overrides
+
+`~/.config/skillet/config.local.toml`, when present, overrides `config.toml` on this machine. It
+takes the same entries, and a same-named source, server or pack replaces the one in `config.toml`;
+`agents` replaces the list and `secrets` are added. Two more keys switch entries of either file on
+or off by the names the commands take; `disabled` wins over `enabled`:
+
+```toml
+enabled = ["@experiments", "top-design"]
+disabled = ["mcp:simctl-mcp", "skills:ponytail"]
+
+[[mcps]]                                       # this machine reaches Tavily through a proxy
+name = "tavily"
+url = "http://localhost:8080/tavily"
+```
+
+`enable --save` and `disable --save` write `config.toml`; a name the local file defines or lists
+is refused, since the local file would win: change it there.
 
 ## How it works
 

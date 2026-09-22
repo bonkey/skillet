@@ -6,8 +6,8 @@ symlinks. `README.md` describes the behaviour; keep it short and focused on the 
 ## Layout
 
 - `main.go` — cobra commands; output formatting only
-- `internal/catalog` — the catalog file, packs, enabled flags, merging of included catalogs and of
-  a project's `.skillet.toml`
+- `internal/catalog` — the catalog file, packs, enabled flags, merging of `config.local.toml`, of
+  included catalogs and of a project's `.skillet.toml`
 - `internal/source` — git clones, skill discovery, the description index
 - `internal/link` — the symlinks into the clones and their ownership rules; the links are the
   enabled state

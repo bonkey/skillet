@@ -73,15 +73,22 @@ func (a *App) merge() error {
 	if a.Project != nil {
 		ids, catalogs = append(ids, paths.ManifestName), append(catalogs, a.Project)
 	}
-	merged, err := catalog.Merge(a.Local, ids, catalogs)
-	a.Catalog = merged
-	if err == nil {
-		if a.Agents != nil {
-			merged.Agents = a.Agents
+	base := a.Local
+	if a.Overlay != nil {
+		var err error
+		if base, err = catalog.Overlay(a.Local, a.Overlay); err != nil {
+			return err
 		}
-		a.expand()
 	}
-	return err
+	merged, err := catalog.Merge(base, ids, catalogs)
+	a.Catalog = merged
+	if err != nil {
+		return err
+	}
+	if a.Agents != nil {
+		merged.Agents = a.Agents
+	}
+	return a.expand()
 }
 
 // readGist returns the catalog of a gist. A failed download falls back to

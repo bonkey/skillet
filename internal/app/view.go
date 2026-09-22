@@ -103,7 +103,7 @@ func (a *App) View() (View, error) {
 		// With 1Password items configured, a name outside the local store may
 		// still resolve, and a listing does not read items to find out.
 		var missing []string
-		if len(a.Local.Secrets) == 0 {
+		if len(a.Catalog.Secrets) == 0 {
 			_, missing = expandMCP(*def, store.Expand)
 		}
 		server := MCPView{
