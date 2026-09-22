@@ -43,7 +43,8 @@ When changing behaviour that touches the home directory, also try it with a thro
 
 ## Documentation
 
-- A change to a command, flag, catalog key or TUI key updates `README.md` and the command's help text.
+- Every change in behaviour updates `README.md`; a change to a command, flag, catalog key or TUI
+  key also updates the command's help text.
 - A change to `list --json`, `enable`, `disable`, `sync`, `run`, the scope flags or the sync output
   lines (skills and MCP) also updates `skills/skillet/SKILL.md`; agents act on what it says.
 - An agent's MCP entry shape in `internal/mcp/targets.go` follows that agent's documentation;
@@ -69,10 +70,13 @@ It runs these recipes in order, and stops at the first failure:
 
 Rules:
 
+- A job is done when it is released: after the work is committed and pushed, cut the release in
+  the same session.
 - Never tag, build release archives or create a GitHub release by hand; use the recipes so every
   release is made the same way.
-- Choose the version by semantic versioning: a breaking change to the catalog format, a command or
-  a flag raises the minor version while the major version is 0.
+- Choose the version by semantic versioning. While the major version is 0: a fix raises the patch
+  version; a new command, flag, key or other addition raises the minor version; so does a
+  breaking change to the catalog format, a command or a flag.
 - A published tag is never moved or deleted. Fix a bad release with a new patch version.
 - If `publish` fails after the tag is pushed, fix the cause and rerun `just dist 1.2.3` and
   `just publish 1.2.3`; do not rerun `release`.
