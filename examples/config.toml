@@ -6,7 +6,8 @@
 #   skillet sync          # clones the source and links the skill
 agents = ["claude-code"]
 
-[packs.skillet]
+[[packs]]
+name = "skillet"
 description = "Lets agents search the catalog and enable or disable skills with skillet"
 skills = ["skillet"]
 

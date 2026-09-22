@@ -54,7 +54,7 @@ func manifest(source, url, skill string, includes ...string) string {
 		quoted[i] = strconv.Quote(id)
 	}
 	return fmt.Sprintf("includes = [%s]\n\n[[skills]]\nname = %q\nurl = %q\nonly = [%q]\n\n"+
-		"[packs.pack-%s]\ndescription = \"Pack of %s\"\nskills = [%q]\n",
+		"[[packs]]\nname = \"pack-%s\"\ndescription = \"Pack of %s\"\nskills = [%q]\n",
 		strings.Join(quoted, ", "), source, url, skill, skill, skill, skill)
 }
 

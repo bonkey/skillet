@@ -141,12 +141,14 @@ skills elsewhere, and to enable and disable what they find.
 ```toml
 agents = ["claude-code", "codex", "zed"]
 
-[packs.craft]
+[[packs]]
+name = "craft"
 description = "Code craft frameworks"
 skills = ["ponytail", "clean-code@wondel"]     # a source name: every skill of it; else one skill
 mcps = ["simctl-mcp"]
 
-[packs.experiments]
+[[packs]]
+name = "experiments"
 description = "Not in use"
 enabled = false                                # off, with everything it holds
 

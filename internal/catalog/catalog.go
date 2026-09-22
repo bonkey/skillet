@@ -64,11 +64,11 @@ type Catalog struct {
 	// catalog never chooses where secrets come from.
 	Secrets []SecretItem `toml:"secrets,omitempty"`
 	Agents  []string     `toml:"agents"`
-	// Sources and MCPs are keyed by the effective name of each entry. The
-	// file holds them as arrays of tables; see fileCatalog.
+	// Sources, MCPs and Packs are keyed by the effective name of each
+	// entry. The file holds them as arrays of tables; see fileCatalog.
 	Sources map[string]*Source `toml:"-"`
 	MCPs    map[string]*MCP    `toml:"-"`
-	Packs   map[string]*Pack   `toml:"packs"`
+	Packs   map[string]*Pack   `toml:"-"`
 
 	// SkillOrigin, SourceOrigin, MCPOrigin and PackOrigin name the gist an
 	// entry of a merged catalog was included from. Entries of the local
@@ -88,16 +88,23 @@ func New() *Catalog {
 	}
 }
 
-// fileCatalog is the catalog as its file holds it: sources under
-// [[skills]] and servers under [[mcps]], each named by an optional key.
+// fileCatalog is the catalog as its file holds it: packs under [[packs]],
+// each with a name, sources under [[skills]] and servers under [[mcps]],
+// each named by an optional key.
 type fileCatalog struct {
-	Gist     string           `toml:"gist,omitempty"`
-	Includes []string         `toml:"includes,omitempty"`
-	Secrets  []SecretItem     `toml:"secrets,omitempty"`
-	Agents   []string         `toml:"agents"`
-	Packs    map[string]*Pack `toml:"packs"`
-	Skills   []*fileSource    `toml:"skills,omitempty"`
-	MCPs     []*MCP           `toml:"mcps,omitempty"`
+	Gist     string        `toml:"gist,omitempty"`
+	Includes []string      `toml:"includes,omitempty"`
+	Secrets  []SecretItem  `toml:"secrets,omitempty"`
+	Agents   []string      `toml:"agents"`
+	Packs    []*filePack   `toml:"packs,omitempty"`
+	Skills   []*fileSource `toml:"skills,omitempty"`
+	MCPs     []*MCP        `toml:"mcps,omitempty"`
+}
+
+// filePack is a [[packs]] entry: a pack with the name it goes by.
+type filePack struct {
+	Name string `toml:"name"`
+	Pack
 }
 
 // fileSource is a [[skills]] entry. Only holds names and, for a skill that
@@ -177,8 +184,15 @@ func Parse(data []byte) (*Catalog, error) {
 	if f.Agents != nil {
 		c.Agents = f.Agents
 	}
-	if f.Packs != nil {
-		c.Packs = f.Packs
+	for i, entry := range f.Packs {
+		if entry.Name == "" {
+			return nil, fmt.Errorf("[[packs]] entry %d has no name", i+1)
+		}
+		if _, dup := c.Packs[entry.Name]; dup {
+			return nil, fmt.Errorf("two packs are named %q", entry.Name)
+		}
+		pack := entry.Pack
+		c.Packs[entry.Name] = &pack
 	}
 	sources := make([]*Source, len(f.Skills))
 	for i, entry := range f.Skills {
@@ -211,9 +225,13 @@ func Parse(data []byte) (*Catalog, error) {
 	return c, nil
 }
 
-// Encode renders the catalog as its file, sources and servers sorted by name.
+// Encode renders the catalog as its file, packs, sources and servers sorted
+// by name.
 func (c *Catalog) Encode() ([]byte, error) {
-	f := fileCatalog{Gist: c.Gist, Includes: c.Includes, Secrets: c.Secrets, Agents: c.Agents, Packs: c.Packs}
+	f := fileCatalog{Gist: c.Gist, Includes: c.Includes, Secrets: c.Secrets, Agents: c.Agents}
+	for _, name := range c.PackNames() {
+		f.Packs = append(f.Packs, &filePack{Name: name, Pack: *c.Packs[name]})
+	}
 	for _, name := range sortedKeys(c.Sources) {
 		f.Skills = append(f.Skills, fileSourceOf(c.Sources[name]))
 	}
@@ -235,30 +253,12 @@ func (c *Catalog) Save(file string) error {
 	return writeFile(file, data)
 }
 
-var (
-	// A table header that only introduces its sub-tables.
-	parentHeader = regexp.MustCompile(`(?m)^\[([^\]\n]+)\]\n(\[([^\]\n]+)\]\n)`)
-	nameList     = regexp.MustCompile(`(?m)^(skills|mcps|packs|except|only) = \[(.*)\]$`)
-)
+var nameList = regexp.MustCompile(`(?m)^(skills|mcps|packs|except|only) = \[(.*)\]$`)
 
-// tidy makes the encoder's output pleasant to edit: parent tables without
-// keys lose their header, and a long list of names gets one name per line.
+// tidy makes the encoder's output pleasant to edit: a long list of names
+// gets one name per line.
 func tidy(data []byte) []byte {
-	text := string(data)
-	for {
-		next := parentHeader.ReplaceAllStringFunc(text, func(match string) string {
-			m := parentHeader.FindStringSubmatch(match)
-			if strings.HasPrefix(m[3], m[1]+".") {
-				return m[2]
-			}
-			return match
-		})
-		if next == text {
-			break
-		}
-		text = next
-	}
-	text = nameList.ReplaceAllStringFunc(text, func(line string) string {
+	text := nameList.ReplaceAllStringFunc(string(data), func(line string) string {
 		m := nameList.FindStringSubmatch(line)
 		if len(line) <= 100 || strings.Contains(m[2], "{") {
 			return line

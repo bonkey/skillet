@@ -76,7 +76,7 @@ func (e env) config(skills, tail string) string {
 		members = "skills = ['skills']"
 	}
 	return fmt.Sprintf("agents = ['claude-code']\n\n[[skills]]\nurl = %q\n%s\n\n"+
-		"[packs.acme]\ndescription = 'Acme skills'\n%s\n%s", e.origin, skills, members, tail)
+		"[[packs]]\nname = 'acme'\ndescription = 'Acme skills'\n%s\n%s", e.origin, skills, members, tail)
 }
 
 // add writes a catalog with alpha and beta, optionally declared enabled,
@@ -424,7 +424,7 @@ func TestProjectManifestIsACatalogOfItsOwn(t *testing.T) {
 	e := setup(t)
 	e.open(t, "agents = ['claude-code', 'codex']\n")
 	write(t, filepath.Join(e.p.Cwd, paths.ManifestName), fmt.Sprintf(
-		"[[skills]]\nurl = %q\nonly = ['alpha', { name = 'beta', enabled = false }]\n\n[packs.acme]\ndescription = 'Acme skills'\n"+
+		"[[skills]]\nurl = %q\nonly = ['alpha', { name = 'beta', enabled = false }]\n\n[[packs]]\nname = 'acme'\ndescription = 'Acme skills'\n"+
 			"skills = ['alpha', 'beta']\n", e.origin))
 	sub := e.p
 	sub.Cwd = filepath.Join(e.p.Cwd, "deep")

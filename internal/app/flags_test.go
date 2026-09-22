@@ -30,7 +30,7 @@ func TestSaveWritesTheFlagsIntoTheConfig(t *testing.T) {
 	if _, err := e.app.Toggle(e.app.Global(), false, true, "@acme"); err != nil || isLink(filepath.Join(global, "alpha")) {
 		t.Fatalf("disable --save @acme: %v", err)
 	}
-	if !strings.Contains(config(), "[packs.acme]\ndescription = 'Acme skills'\nenabled = false\n") {
+	if !strings.Contains(config(), "[[packs]]\nname = 'acme'\ndescription = 'Acme skills'\nenabled = false\n") {
 		t.Fatalf("the pack is switched off in the file:\n%s", config())
 	}
 
@@ -102,7 +102,7 @@ func TestSaveInAProjectFlagsTheManifestOnly(t *testing.T) {
 	// brings beta through its own source and alpha through its own pack.
 	e.open(t, e.config("only = ['alpha']", "enabled = false\n"))
 	manifest := filepath.Join(e.p.Cwd, paths.ManifestName)
-	write(t, manifest, fmt.Sprintf("[packs.proj]\ndescription = 'Project pack'\nskills = ['alpha']\n\n[[skills]]\nname = 'mine'\nurl = %q\nonly = ['beta']\n", e.origin))
+	write(t, manifest, fmt.Sprintf("[[packs]]\nname = 'proj'\ndescription = 'Project pack'\nskills = ['alpha']\n\n[[skills]]\nname = 'mine'\nurl = %q\nonly = ['beta']\n", e.origin))
 	a, err := Open(e.p)
 	if err != nil {
 		t.Fatal(err)
@@ -119,7 +119,7 @@ func TestSaveInAProjectFlagsTheManifestOnly(t *testing.T) {
 	if _, err := a.Toggle(scope, false, true, "@proj"); err != nil || isLink(filepath.Join(local, "alpha")) {
 		t.Fatalf("disable -p --save @proj: %v", err)
 	}
-	if !strings.Contains(read(t, manifest), "[packs.proj]\ndescription = 'Project pack'\nenabled = false\n") {
+	if !strings.Contains(read(t, manifest), "[[packs]]\nname = 'proj'\ndescription = 'Project pack'\nenabled = false\n") {
 		t.Fatalf("the manifest holds the flag:\n%s", read(t, manifest))
 	}
 	if _, err := a.Toggle(scope, false, true, "@acme"); err == nil || !strings.Contains(err.Error(), "own entries") {

@@ -13,7 +13,8 @@ var everything = func(string) bool { return true }
 func TestFlagsRoundTrip(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "config.toml")
 	c, err := Parse([]byte(`
-[packs.p]
+[[packs]]
+name = "p"
 description = "P"
 enabled = false
 skills = ["a"]
@@ -62,7 +63,10 @@ enabled = false
 		"no name":      "[[skills]]\nurl = \"https://x/a/b.git\"\nonly = [{ enabled = false }]\n",
 		"no flag":      "[[skills]]\nurl = \"https://x/a/b.git\"\nonly = [{ name = \"x\" }]\n",
 		"wrong type":   "[[skills]]\nurl = \"https://x/a/b.git\"\nonly = [{ name = \"x\", enabled = \"no\" }]\n",
-		"pack flag":    "[packs.p]\ndescription = \"P\"\nenabled = \"no\"\n",
+		"pack flag":    "[[packs]]\nname = \"p\"\ndescription = \"P\"\nenabled = \"no\"\n",
+		"pack name":    "[[packs]]\ndescription = \"P\"\n",
+		"pack twice":   "[[packs]]\nname = \"p\"\ndescription = \"P\"\n\n[[packs]]\nname = \"p\"\ndescription = \"Q\"\n",
+		"packs table":  "[packs.p]\ndescription = \"P\"\n",
 		"source flag":  "[[skills]]\nurl = \"https://x/a/b.git\"\nenabled = 1\n",
 		"server flag":  "[[mcps]]\nurl = \"https://x.io\"\nenabled = \"off\"\n",
 		"only strings": "[[skills]]\nurl = \"https://x/a/b.git\"\nonly = \"x\"\n",
