@@ -48,15 +48,20 @@ type Model struct {
 	collapsed map[string]bool
 	filter    string
 
-	// marks holds the changes that wait for the confirmation, per scope
-	// (keyed by Scope.Project): a skill, or a server as "mcp:name", and
-	// whether it gets enabled.
-	marks map[bool]map[string]bool
+	// marks holds the changes that wait to be applied, per scope (keyed by
+	// Scope.Project): a skill, or a server as "mcp:name", and whether it
+	// gets enabled. undo holds the changes that take the last apply back,
+	// and undoSave whether that apply saved. start is what was on when the
+	// session began.
+	marks    map[bool]map[string]bool
+	undo     map[bool]map[string]bool
+	undoSave bool
+	start    map[bool]map[string]bool
 
 	mode     mode
 	input    textinput.Model
 	question string
-	onYes    func(*Model) tea.Cmd
+	answers  map[string]func(*Model) tea.Cmd // by key; any other key cancels
 
 	status string
 	busy   bool
@@ -80,7 +85,30 @@ func Run(a *app.App) error {
 
 func New(a *app.App) (*Model, error) {
 	m := &Model{app: a, scope: a.Global(), collapsed: map[string]bool{}, marks: map[bool]map[string]bool{false: {}, true: {}}, input: textinput.New(), width: 100, height: 30}
-	return m, m.reload()
+	if err := m.reload(); err != nil {
+		return nil, err
+	}
+	m.start = map[bool]map[string]bool{false: m.state(false), true: m.state(true)}
+	return m, nil
+}
+
+// state lists what is on in a scope: skills, and globally servers as
+// "mcp:name".
+func (m *Model) state(project bool) map[string]bool {
+	on := map[string]bool{}
+	for name, skill := range m.view.Skills {
+		if project && skill.Project || !project && skill.Global {
+			on[name] = true
+		}
+	}
+	if !project {
+		for name, server := range m.view.MCPs {
+			if server.Global {
+				on[catalog.MCPPrefix+name] = true
+			}
+		}
+	}
+	return on
 }
 
 func (m *Model) Init() tea.Cmd { return nil }
@@ -220,8 +248,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.updateInput(msg)
 		case modeConfirm:
 			m.mode = modeList
-			if msg.String() == "y" {
-				return m, m.onYes(m)
+			if answer, ok := m.answers[msg.String()]; ok {
+				return m, answer(m)
 			}
 			m.status = "cancelled"
 			return m, nil
@@ -244,7 +272,12 @@ func (m *Model) updateList(msg tea.KeyMsg) tea.Cmd {
 		if m.marked() == 0 {
 			return tea.Quit
 		}
-		m.confirm(fmt.Sprintf("quit and drop %d marked changes?", m.marked()), func(*Model) tea.Cmd { return tea.Quit })
+		m.confirm(fmt.Sprintf("apply %d marked changes before quitting? y = apply, Y = save and apply, n = quit without, other keys stay", m.marked()),
+			map[string]func(*Model) tea.Cmd{
+				"y": func(m *Model) tea.Cmd { m.apply(false); return tea.Quit },
+				"Y": func(m *Model) tea.Cmd { m.apply(true); return tea.Quit },
+				"n": func(*Model) tea.Cmd { return tea.Quit },
+			})
 	case "up", "k":
 		m.cursor = max(0, m.cursor-1)
 	case "down", "j":
@@ -270,7 +303,13 @@ func (m *Model) updateList(msg tea.KeyMsg) tea.Cmd {
 	case " ":
 		m.mark()
 	case "a":
-		m.askApply()
+		m.apply(false)
+	case "s":
+		m.apply(true)
+	case "z":
+		m.undoApply()
+	case "r":
+		m.reset()
 	case "tab":
 		m.switchScope()
 	case "/":
@@ -280,10 +319,12 @@ func (m *Model) updateList(msg tea.KeyMsg) tea.Cmd {
 		m.input.Focus()
 	case "esc":
 		if m.filter == "" && m.marked() > 0 {
-			m.confirm(fmt.Sprintf("drop %d marked changes?", m.marked()), func(m *Model) tea.Cmd {
-				clear(m.marks[false])
-				clear(m.marks[true])
-				return nil
+			m.confirm(fmt.Sprintf("drop %d marked changes? (y/n)", m.marked()), map[string]func(*Model) tea.Cmd{
+				"y": func(m *Model) tea.Cmd {
+					clear(m.marks[false])
+					clear(m.marks[true])
+					return nil
+				},
 			})
 		}
 		m.filter = ""
@@ -298,12 +339,12 @@ func (m *Model) updateList(msg tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
-func (m *Model) confirm(question string, onYes func(*Model) tea.Cmd) {
-	m.mode, m.question, m.onYes = modeConfirm, question, onYes
+func (m *Model) confirm(question string, answers map[string]func(*Model) tea.Cmd) {
+	m.mode, m.question, m.answers = modeConfirm, question, answers
 }
 
-// mark notes the change of the selected row for the confirmation. Marking a
-// row again takes the change back.
+// mark notes the change of the selected row, to be applied with a. Marking
+// a row again takes the change back.
 func (m *Model) mark() {
 	r, ok := m.current()
 	if !ok {
@@ -329,9 +370,9 @@ func (m *Model) mark() {
 	}
 }
 
-// changes lists the marks of one scope as arguments for Toggle.
-func (m *Model) changes(project bool) (enable, disable []string) {
-	for member, on := range m.marks[project] {
+// split lists the changes of one scope as arguments for Toggle.
+func split(changes map[string]bool) (enable, disable []string) {
+	for member, on := range changes {
 		if on {
 			enable = append(enable, member)
 		} else {
@@ -343,30 +384,70 @@ func (m *Model) changes(project bool) (enable, disable []string) {
 	return enable, disable
 }
 
-// askApply asks once for all marked changes of both scopes.
-func (m *Model) askApply() {
+// apply carries out the marked changes of both scopes, with save also in
+// the config files, and keeps what takes them back for z.
+func (m *Model) apply(save bool) {
 	if m.marked() == 0 {
 		m.status = "nothing is marked: space marks a skill, a server or a pack"
 		return
 	}
-	var parts []string
-	for _, project := range []bool{false, true} {
-		enable, disable := m.changes(project)
-		scope := map[bool]string{false: "global", true: "project"}[project]
-		if len(enable) > 0 {
-			parts = append(parts, fmt.Sprintf("enable %s (%s)", strings.Join(enable, ", "), scope))
-		}
-		if len(disable) > 0 {
-			parts = append(parts, fmt.Sprintf("disable %s (%s)", strings.Join(disable, ", "), scope))
-		}
+	done := "applied; z undoes"
+	if save {
+		done = "saved and applied; z undoes"
 	}
-	m.confirm(strings.Join(parts, "; ")+"?", (*Model).apply)
+	m.undo, m.undoSave = m.applyChanges(m.marks, save, done), save
+	clear(m.marks[false])
+	clear(m.marks[true])
 }
 
-func (m *Model) apply() tea.Cmd {
+// undoApply takes the last apply back.
+func (m *Model) undoApply() {
+	if len(m.undo[false])+len(m.undo[true]) == 0 {
+		m.status = "nothing to undo"
+		return
+	}
+	m.applyChanges(m.undo, m.undoSave, "undone")
+	m.undo = nil
+}
+
+// reset brings both scopes back to what was on when the session started,
+// which z takes back again.
+func (m *Model) reset() {
+	changes := map[bool]map[string]bool{false: {}, true: {}}
+	for _, project := range []bool{false, true} {
+		now := m.state(project)
+		for member := range now {
+			if !m.start[project][member] {
+				changes[project][member] = false
+			}
+		}
+		for member := range m.start[project] {
+			if !now[member] {
+				changes[project][member] = true
+			}
+		}
+	}
+	if len(changes[false])+len(changes[true]) == 0 {
+		m.status = "nothing to reset: the state is as at the session start"
+		return
+	}
+	m.undo, m.undoSave = m.applyChanges(changes, false, "reset to the session start; z undoes"), false
+	clear(m.marks[false])
+	clear(m.marks[true])
+}
+
+// applyChanges toggles the changes of both scopes, with save also in the
+// config files, and returns their reverse. The status starts with done,
+// followed by what the sync reports.
+func (m *Model) applyChanges(changes map[bool]map[string]bool, save bool, done string) map[bool]map[string]bool {
+	reverse := map[bool]map[string]bool{false: {}, true: {}}
 	var notes []string
 	var failed error
 	for _, project := range []bool{false, true} {
+		enable, disable := split(changes[project])
+		if len(enable)+len(disable) == 0 {
+			continue
+		}
 		scope := m.app.Global()
 		if project {
 			var err error
@@ -375,28 +456,27 @@ func (m *Model) apply() tea.Cmd {
 				continue
 			}
 		}
-		enable, disable := m.changes(project)
 		for i, names := range [][]string{enable, disable} {
 			if len(names) == 0 {
 				continue
 			}
-			report, err := m.app.Toggle(scope, i == 0, false, names...)
+			report, err := m.app.Toggle(scope, i == 0, save, names...)
 			if summary := syncSummary(report); summary != "" {
 				notes = append(notes, summary)
 			}
 			if err != nil {
 				failed = err
+				continue
+			}
+			for _, name := range names {
+				reverse[project][name] = i != 0
 			}
 		}
-		clear(m.marks[project])
 	}
-	m.status = strings.Join(notes, "; ")
-	if m.status == "" {
-		m.status = "applied"
-	}
+	m.status = strings.Join(append([]string{done}, notes...), "; ")
 	m.fail(failed)
 	m.fail(m.reload())
-	return nil
+	return reverse
 }
 
 func (m *Model) switchScope() {
@@ -526,9 +606,9 @@ func (m *Model) View() string {
 	case modeFilter:
 		footer = "filter: " + m.input.View()
 	case modeConfirm:
-		footer = styleWarn.Render(truncate(m.question, m.width-6) + " (y/n)")
+		footer = styleWarn.Render(truncate(m.question, m.width))
 	default:
-		footer = styleDim.Render(truncate("space mark · a apply the marks · esc drop them · tab scope · / filter · u update · ←/→ fold · q quit", m.width))
+		footer = styleDim.Render(truncate("space mark · a apply · s save and apply · z undo · r reset · esc drop marks · tab scope · / filter · u update · ←/→ fold · q quit", m.width))
 	}
 	status := styleWarn.Render(truncate(m.status, m.width))
 	return strings.Join([]string{header, lipgloss.JoinHorizontal(lipgloss.Top, left, right), status, footer}, "\n")

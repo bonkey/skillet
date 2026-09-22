@@ -46,6 +46,8 @@ type App struct {
 
 	Included []Included // the included gists, flattened in merge order
 	Warnings []string   // problems with included gists
+	// pendingSecrets holds values an import found before they are saved.
+	pendingSecrets secrets.Store
 }
 
 func Open(p paths.Paths) (*App, error) { return OpenWith(p, gist.GH{}) }
@@ -190,6 +192,9 @@ func (a *App) Enabled(scope Scope) ([]string, error) {
 type SyncReport struct {
 	Scope   Scope
 	Actions []link.Action
+	// Kept and KeptMCP list the links and entries found already right.
+	Kept    []link.Action
+	KeptMCP []mcp.Action
 	Missing []string // enabled skills that are not available in their source's clone; their links stay
 	// Extra lists the skills, and servers as "mcp:name", that are enabled
 	// without being declared in the scope's config file.
@@ -207,6 +212,11 @@ type SyncOptions struct {
 	DryRun bool
 	// Remove disables what is enabled on the disk but not declared.
 	Remove bool
+	// Clear disables everything skillet manages in the scope.
+	Clear bool
+	// Purge deletes the skills and servers skillet does not manage from
+	// the agents' directories and configs.
+	Purge bool
 	// Replace allows deleting an unmanaged entry that stands where the
 	// named skill goes. App.Force allows it for every skill.
 	Replace func(name string) bool
@@ -222,7 +232,7 @@ type SyncOptions struct {
 // sync as their last step.
 func (a *App) Sync(scope Scope, opt SyncOptions) (SyncReport, error) {
 	var failed []string
-	if !opt.DryRun {
+	if !opt.DryRun && !opt.Clear {
 		var err error
 		if failed, err = a.cloneMissing(); err != nil {
 			return SyncReport{Scope: scope}, err
@@ -237,6 +247,9 @@ func (a *App) Sync(scope Scope, opt SyncOptions) (SyncReport, error) {
 		opt.Remove = false
 	}
 	declared := a.Declared(scope)
+	if opt.Clear {
+		declared, opt.Remove = catalog.Set{}, true
+	}
 	skills, servers := a.Catalog.Resolve(declared), a.Catalog.ResolveMCPs(declared)
 	var extra []string
 	for _, skill := range own.Skills {
@@ -341,8 +354,8 @@ func (a *App) link(scope Scope, want enabling, opt SyncOptions) (SyncReport, err
 	if a.Force {
 		opt.Replace = func(string) bool { return true }
 	}
-	report.Actions, err = link.Sync(dirs, desired, link.Options{
-		ReposDir: a.Paths.ReposDir(), Keep: keep, Replace: opt.Replace, DryRun: opt.DryRun,
+	report.Actions, report.Kept, err = link.Sync(dirs, desired, link.Options{
+		ReposDir: a.Paths.ReposDir(), Keep: keep, Replace: opt.Replace, Purge: opt.Purge, DryRun: opt.DryRun,
 	})
 	if err != nil {
 		return report, err
@@ -353,7 +366,7 @@ func (a *App) link(scope Scope, want enabling, opt SyncOptions) (SyncReport, err
 				"MCP servers are global: %s are not enabled by a project; enable them globally or use `skillet run`",
 				strings.Join(want.servers, ", ")))
 		}
-	} else if err := a.syncMCP(&report, want.servers, live, opt.DryRun); err != nil {
+	} else if err := a.syncMCP(&report, want.servers, live, opt); err != nil {
 		return report, err
 	}
 	if !opt.DryRun {
@@ -367,7 +380,7 @@ func (a *App) link(scope Scope, want enabling, opt SyncOptions) (SyncReport, err
 // started, or for every agent when it started none of them. A server whose
 // secrets are not all known is left as it is. Secrets are looked up only for
 // entries that may need writing.
-func (a *App) syncMCP(report *SyncReport, enabled []string, sessions []session.Session, dryRun bool) error {
+func (a *App) syncMCP(report *SyncReport, enabled []string, sessions []session.Session, opt SyncOptions) error {
 	resolver, err := a.resolver()
 	if err != nil {
 		return err
@@ -411,8 +424,9 @@ func (a *App) syncMCP(report *SyncReport, enabled []string, sessions []session.S
 		for _, name := range servers {
 			desired[name] = *a.Catalog.MCPs[name]
 		}
-		actions, missing, err := mcp.Sync(a.Paths.Home, []string{agent}, desired, expand, state, mcp.Options{DryRun: dryRun})
+		actions, kept, missing, err := mcp.Sync(a.Paths.Home, []string{agent}, desired, expand, state, mcp.Options{DryRun: opt.DryRun, Purge: opt.Purge})
 		report.MCP = append(report.MCP, actions...)
+		report.KeptMCP = append(report.KeptMCP, kept...)
 		for name, names := range missing {
 			if report.MissingSecrets == nil {
 				report.MissingSecrets = map[string][]string{}
@@ -426,7 +440,7 @@ func (a *App) syncMCP(report *SyncReport, enabled []string, sessions []session.S
 	for _, problem := range resolver.Problems {
 		report.Notes = append(report.Notes, "1Password: "+problem)
 	}
-	if dryRun {
+	if opt.DryRun {
 		return nil
 	}
 	return state.Save(a.Paths.MCPStateFile())
@@ -438,6 +452,9 @@ func (a *App) resolver() (*secrets.Resolver, error) {
 	local, err := secrets.Load(a.Paths.SecretsFile())
 	if err != nil {
 		return nil, err
+	}
+	for name, value := range a.pendingSecrets {
+		local[name] = value
 	}
 	r := &secrets.Resolver{Local: local, Reader: a.OnePassword}
 	for _, item := range a.Local.Secrets {

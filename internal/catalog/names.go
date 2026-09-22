@@ -67,6 +67,14 @@ var (
 	interpreters = map[string]bool{"node": true, "python": true, "python3": true, "bun": true}
 )
 
+// GuessName names the server after its command or URL, the explicit name
+// aside.
+func (m *MCP) GuessName() (string, error) {
+	guess := *m
+	guess.Name = ""
+	return guess.name()
+}
+
 // name gives the server its name: the explicit one, else one guessed from
 // the command or the URL.
 func (m *MCP) name() (string, error) {

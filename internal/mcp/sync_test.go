@@ -62,7 +62,7 @@ func (h home) file(rel string) string { return filepath.Join(h.dir, rel) }
 
 func (h home) sync(t *testing.T, agents []string, desired map[string]catalog.MCP, opt Options) map[string]string {
 	t.Helper()
-	actions, _, err := Sync(h.dir, agents, desired, asIs, h.state, opt)
+	actions, _, _, err := Sync(h.dir, agents, desired, asIs, h.state, opt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,8 +109,8 @@ func TestSyncWritesEveryAgentAndRemovesOnlyItsOwn(t *testing.T) {
 	if info, _ := os.Stat(claude); info.Mode().Perm() != 0o644 {
 		t.Errorf("an existing file keeps its mode: %v", info.Mode().Perm())
 	}
-	if got := h.sync(t, agents, desired, Options{}); len(got) != 0 {
-		t.Fatalf("second sync must be a no-op: %v", got)
+	if actions, kept, _, err := Sync(h.dir, agents, desired, asIs, h.state, Options{}); err != nil || len(actions) != 0 || len(kept) != 6 || kept[0].Op != OpKeep {
+		t.Fatalf("second sync must be a no-op that reports every entry as kept: %v %v %v", actions, kept, err)
 	}
 
 	got = h.sync(t, agents, map[string]catalog.MCP{"remote": remoteDef}, Options{})
@@ -124,6 +124,29 @@ func TestSyncWritesEveryAgentAndRemovesOnlyItsOwn(t *testing.T) {
 	}
 	if len(h.state) != 0 {
 		t.Errorf("state should be empty: %v", h.state)
+	}
+}
+
+func TestPurgeDeletesEntriesSkilletDoesNotManage(t *testing.T) {
+	h := home{t.TempDir(), State{}}
+	cursor := h.file(".cursor/mcp.json")
+	os.MkdirAll(filepath.Dir(cursor), 0o755)
+	os.WriteFile(cursor, []byte(`{
+  "theme": "dark",
+  "mcpServers": {
+    "simctl": { "command": "something-else" },
+    "mine": { "command": "untouched" }
+  }
+}
+`), 0o644)
+	desired := map[string]catalog.MCP{"simctl": localDef}
+	got := h.sync(t, []string{"cursor"}, desired, Options{Purge: true})
+	want := map[string]string{".cursor/mcp.json#simctl": OpUpdate, ".cursor/mcp.json#mine": OpDelete}
+	if text := read(t, cursor); !reflect.DeepEqual(got, want) || strings.Contains(text, "untouched") || !strings.Contains(text, "\"theme\"") {
+		t.Fatalf("purge deletes the user's entry and keeps the rest of the file: %v\n%s", got, text)
+	}
+	if got := h.sync(t, []string{"cursor"}, desired, Options{Purge: true}); len(got) != 0 {
+		t.Errorf("a second purge has nothing to do: %v", got)
 	}
 }
 
@@ -201,7 +224,7 @@ func TestSyncAsksForSecretsOnlyWhenAnEntryMayChange(t *testing.T) {
 	}
 	sync := func(desired map[string]catalog.MCP) ([]Action, map[string][]string) {
 		t.Helper()
-		actions, missing, err := Sync(h.dir, []string{"cursor"}, desired, expand, h.state, Options{})
+		actions, _, missing, err := Sync(h.dir, []string{"cursor"}, desired, expand, h.state, Options{})
 		if err != nil {
 			t.Fatal(err)
 		}

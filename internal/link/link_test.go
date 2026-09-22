@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -35,7 +36,7 @@ func setup(t *testing.T) fixture {
 func (f fixture) sync(t *testing.T, opt Options) map[string]string {
 	t.Helper()
 	opt.ReposDir = f.repos
-	actions, err := Sync([]string{f.agents, f.claude}, f.desired, opt)
+	actions, _, err := Sync([]string{f.agents, f.claude}, f.desired, opt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,6 +45,46 @@ func (f fixture) sync(t *testing.T, opt Options) map[string]string {
 		out[filepath.Base(filepath.Dir(a.Dir))+"/"+a.Name] = a.Op
 	}
 	return out
+}
+
+func TestPurgeDeletesWhatSkilletDoesNotManage(t *testing.T) {
+	f := setup(t)
+	mkdir(t, filepath.Join(f.claude, "hand"))
+	mkdir(t, filepath.Join(f.claude, ".skillet-sessions"))
+	symlink(t, "/somewhere/else", filepath.Join(f.agents, "foreign"))
+	symlink(t, f.desired["beta"], filepath.Join(f.agents, "beta"))
+	mkdir(t, filepath.Join(f.agents, "kept"))
+	f.desired = map[string]string{"alpha": f.desired["alpha"]}
+	want := map[string]string{".claude/hand": OpDelete, ".agents/foreign": OpDelete, ".agents/beta": OpUnlink,
+		".claude/alpha": OpLink, ".agents/alpha": OpLink}
+	if got := f.sync(t, Options{Purge: true, Keep: map[string]bool{"kept": true}}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v", got)
+	}
+	for _, gone := range []string{filepath.Join(f.claude, "hand"), filepath.Join(f.agents, "foreign")} {
+		if _, err := os.Lstat(gone); !os.IsNotExist(err) {
+			t.Errorf("%s should be deleted", gone)
+		}
+	}
+	for _, stays := range []string{filepath.Join(f.claude, ".skillet-sessions"), filepath.Join(f.agents, "kept")} {
+		if _, err := os.Lstat(stays); err != nil {
+			t.Errorf("%s should stay: %v", stays, err)
+		}
+	}
+	if got := f.sync(t, Options{}); len(got) != 0 {
+		t.Errorf("without purge nothing else changes: %v", got)
+	}
+}
+
+func TestSyncReportsTheLinksItKeeps(t *testing.T) {
+	f := setup(t)
+	f.sync(t, Options{})
+	actions, kept, err := Sync([]string{f.agents, f.claude}, f.desired, Options{ReposDir: f.repos})
+	if err != nil || len(actions) != 0 || len(kept) != 6 || kept[0].Op != OpKeep {
+		t.Fatalf("a second sync keeps every link: %v %v %v", actions, kept, err)
+	}
+	if got := kept[0].String(); !strings.HasPrefix(got, "keep     ") || !strings.Contains(got, " -> ") {
+		t.Errorf("keep line: %q", got)
+	}
 }
 
 func mkdir(t *testing.T, dir string) {

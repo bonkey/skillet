@@ -15,24 +15,30 @@ import (
 type ImportReport struct {
 	Imported []string          // catalog skill names
 	Renamed  map[string]string // lock name to catalog name, where they differ
-	Skipped  map[string]string // lock name to reason
+	Skipped  map[string]string // lock name, or "mcp:name", to reason
+	Servers  []string          // servers taken from the agents' configs
+	Secrets  []string          // placeholder names whose values went into secrets.toml
 	Sync     SyncReport
 }
 
 // LegacyLock is the global lock file of the `skills` npm CLI.
 func (a *App) LegacyLock() string { return filepath.Join(a.Paths.Home, ".agents", ".skill-lock.json") }
 
-// Import seeds the catalog from a `skills` CLI lock file. Only the
-// definitions come from the lock; the content of every source is fetched
-// fresh. The locked skills are added, put in one pack per source and enabled
-// globally, and the folders the `skills` CLI installed in ~/.agents/skills
-// are deleted: links into the clones take their place where a configured
-// agent reads that directory. A dry run fetches too, but writes neither the
-// catalog nor any link.
+// Import seeds the catalog from a `skills` CLI lock file and from the MCP
+// servers in the agents' configs. Only the definitions come from the lock;
+// the content of every source is fetched fresh. The locked skills are
+// added and put in one pack per source, and the folders the `skills` CLI
+// installed in ~/.agents/skills are deleted: links into the clones take
+// their place where a configured agent reads that directory. Servers the
+// agents hold join the catalog with their secrets moved to secrets.toml. A
+// dry run fetches too, but writes neither the catalog nor any link.
 func (a *App) Import(lockFile string, dryRun bool) (ImportReport, error) {
 	report := ImportReport{Renamed: map[string]string{}, Skipped: map[string]string{}}
 	entries, skipped, err := importer.Read(lockFile)
 	if err != nil {
+		return report, err
+	}
+	if err := a.importServers(&report, dryRun); err != nil {
 		return report, err
 	}
 	for _, name := range skipped {

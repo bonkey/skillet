@@ -69,6 +69,8 @@ const (
 	OpRelink   = "relink"
 	OpReplace  = "replace"  // an unmanaged entry is deleted and a link takes its place
 	OpConflict = "conflict" // something skillet does not own is in the way
+	OpKeep     = "keep"     // the link is already right
+	OpDelete   = "delete"   // an unmanaged entry that no skill needs is deleted (purge)
 )
 
 type Action struct {
@@ -83,8 +85,8 @@ func (a Action) String() string {
 	switch a.Op {
 	case OpConflict:
 		return fmt.Sprintf("conflict %s exists and is not managed by skillet; --force replaces it", path)
-	case OpUnlink:
-		return fmt.Sprintf("unlink   %s", path)
+	case OpUnlink, OpDelete:
+		return fmt.Sprintf("%-8s %s", a.Op, path)
 	default:
 		return fmt.Sprintf("%-8s %s -> %s", a.Op, path, a.Target)
 	}
@@ -100,7 +102,10 @@ type Options struct {
 	// Replace allows deleting an unmanaged entry that stands where the named
 	// skill goes.
 	Replace func(name string) bool
-	DryRun  bool
+	// Purge deletes every unmanaged entry that no desired or kept skill
+	// needs; hidden entries stay.
+	Purge  bool
+	DryRun bool
 }
 
 // Linked lists the names that have a managed link in any of dirs.
@@ -118,9 +123,9 @@ func Linked(dirs []string, reposDir string) []string {
 }
 
 // Sync makes the managed links in dirs match desired (skill name to absolute
-// skill folder). It returns what it did, or would do in a dry run.
-func Sync(dirs []string, desired map[string]string, opt Options) ([]Action, error) {
-	var actions []Action
+// skill folder). It returns what it did, or would do in a dry run, and the
+// links it found already right.
+func Sync(dirs []string, desired map[string]string, opt Options) (actions, kept []Action, err error) {
 	var done []string
 	for _, dir := range dirs {
 		if slices.ContainsFunc(done, func(other string) bool { return sameDir(dir, other) }) {
@@ -129,12 +134,18 @@ func Sync(dirs []string, desired map[string]string, opt Options) ([]Action, erro
 		done = append(done, dir)
 		planned, err := plan(dir, dirs, desired, opt)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		actions = append(actions, planned...)
+		for _, a := range planned {
+			if a.Op == OpKeep {
+				kept = append(kept, a)
+			} else {
+				actions = append(actions, a)
+			}
+		}
 	}
 	if opt.DryRun {
-		return actions, nil
+		return actions, kept, nil
 	}
 	for _, a := range actions {
 		path := filepath.Join(a.Dir, a.Name)
@@ -142,22 +153,22 @@ func Sync(dirs []string, desired map[string]string, opt Options) ([]Action, erro
 		switch a.Op {
 		case OpUnlink, OpRelink:
 			err = os.Remove(path)
-		case OpReplace:
+		case OpReplace, OpDelete:
 			err = os.RemoveAll(path)
 		}
 		if err != nil {
-			return actions, err
+			return actions, kept, err
 		}
 		if a.Op == OpLink || a.Op == OpRelink || a.Op == OpReplace {
 			if err := os.MkdirAll(a.Dir, 0o755); err != nil {
-				return actions, err
+				return actions, kept, err
 			}
 			if err := os.Symlink(a.Target, path); err != nil {
-				return actions, err
+				return actions, kept, err
 			}
 		}
 	}
-	return actions, nil
+	return actions, kept, nil
 }
 
 func plan(dir string, dirs []string, desired map[string]string, opt Options) ([]Action, error) {
@@ -168,8 +179,13 @@ func plan(dir string, dirs []string, desired map[string]string, opt Options) ([]
 	}
 	for _, entry := range entries {
 		name := entry.Name()
-		if _, wanted := desired[name]; !wanted && !opt.Keep[name] && owned(dir, name, dirs, opt.ReposDir) {
+		_, wanted := desired[name]
+		switch {
+		case wanted || opt.Keep[name]:
+		case owned(dir, name, dirs, opt.ReposDir):
 			actions = append(actions, Action{Op: OpUnlink, Dir: dir, Name: name})
+		case opt.Purge && !strings.HasPrefix(name, "."):
+			actions = append(actions, Action{Op: OpDelete, Dir: dir, Name: name})
 		}
 	}
 	for _, name := range sortedKeys(desired) {
@@ -180,7 +196,7 @@ func plan(dir string, dirs []string, desired map[string]string, opt Options) ([]
 		case os.IsNotExist(statErr):
 			action.Op = OpLink
 		case isLink && target == desired[name]:
-			continue
+			action.Op = OpKeep
 		case owned(dir, name, dirs, opt.ReposDir):
 			action.Op = OpRelink
 		case opt.Replace != nil && opt.Replace(name):

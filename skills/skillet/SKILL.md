@@ -42,7 +42,7 @@ matching servers the same way, with their command or URL as `target`.
 - Run `skillet` only with a subcommand. Bare `skillet` opens an interactive TUI that an agent cannot drive.
 - Read the catalog with `skillet list --json`. Take skill and pack names from that output; never guess them.
 - To switch a skill off, use `disable`. The catalog is the user's `config.toml`: do not edit it without the user's consent, and add `--save` only when the user asks for a lasting change.
-- Never add `--force` on your own. It deletes whatever stands in the way of a link. When a command prints a `conflict` line, show it to the user and ask.
+- Never add `--force`, `--purge` or `--clear` on your own. `--force` deletes whatever stands in the way of a link, `sync --purge` deletes the skills and servers skillet does not manage, and `sync --clear` disables everything it manages. When a command prints a `conflict` line, show it to the user and ask.
 - Adding skills to the catalog is the user's decision: it holds skills the user has evaluated. Propose the lines for `~/.config/skillet/config.toml` and wait for a yes.
 - Do not pass `--agents` unless the user asks to act on certain agents only.
 - Agents read their skills directories when a session starts. After a change, tell the user that a skill that does not show up yet is available in the next session.
@@ -94,7 +94,7 @@ project: say so, and offer to disable it globally and enable it with `-p` in the
    Disabling one skill of a pack leaves the pack's other skills enabled.
 
 4. Read the output. Each line is one kind of change with the scope and the names it covers:
-   `link`, `unlink`, `relink`, `replace`. With `--verbose` each line is one link with its path.
+   `link`, `unlink`, `relink`, `replace`, `delete`. With `--verbose` each line is one link with its path, and `keep` lines list the links that were already right.
    `nothing to change` means the state already matched. Handle `conflict`, `missing` and `extra`
    lines as described below.
 
@@ -105,8 +105,9 @@ project: say so, and offer to disable it globally and enable it with `-p` in the
 - Servers are global. `-p` does not take them; a pack enabled with `-p` links its skills and
   prints a `note` naming the servers it skipped. Enable those globally, or suggest `skillet run`.
 - `skillet enable mcp:tavily` and `skillet disable mcp:tavily` write and remove the server in the
-  user config of every configured agent. Lines start with `mcp-add`, `mcp-update` or `mcp-remove`
-  and name the servers; with `--verbose` there is one line per config file.
+  user config of every configured agent. Lines start with `mcp-add`, `mcp-update`, `mcp-remove` or `mcp-delete`
+  and name the config file and the servers, one line per file; with `--verbose` there is one
+  line per server entry.
   An entry of the same name that is already in an agent's config is overwritten with the
   catalog's definition.
 - An agent loads its servers at start. Tell the user that the change takes effect in the next

@@ -19,6 +19,8 @@ const (
 	OpAdd    = "mcp-add"
 	OpUpdate = "mcp-update" // also when the entry was there before skillet managed it
 	OpRemove = "mcp-remove"
+	OpKeep   = "mcp-keep"   // the entry is already right
+	OpDelete = "mcp-delete" // an unmanaged entry that is not desired is deleted (purge)
 )
 
 type Action struct {
@@ -84,6 +86,8 @@ func (s State) Save(file string) error {
 
 type Options struct {
 	DryRun bool
+	// Purge deletes the entries skillet does not manage, unless desired.
+	Purge bool
 }
 
 // Expand fills in the secrets of a definition and lists the placeholders
@@ -160,9 +164,8 @@ func open(target Target, data []byte) (document, error) {
 // desired holds definitions with their placeholders unexpanded. expand is
 // called only for a server whose entry may need writing; a server with
 // missing secrets is left as it is and returned with the missing names.
-func Sync(home string, agents []string, desired map[string]catalog.MCP, expand Expand, state State, opt Options) ([]Action, map[string][]string, error) {
-	var actions []Action
-	missing := map[string][]string{}
+func Sync(home string, agents []string, desired map[string]catalog.MCP, expand Expand, state State, opt Options) (actions, kept []Action, missing map[string][]string, err error) {
+	missing = map[string][]string{}
 	names := make([]string, 0, len(desired))
 	for name := range desired {
 		names = append(names, name)
@@ -176,11 +179,11 @@ func Sync(home string, agents []string, desired map[string]catalog.MCP, expand E
 		}
 		file, doc, err := load(home, target)
 		if err != nil {
-			return actions, missing, err
+			return actions, kept, missing, err
 		}
 		present, err := doc.names()
 		if err != nil {
-			return actions, missing, fmt.Errorf("%s: %w", file, err)
+			return actions, kept, missing, fmt.Errorf("%s: %w", file, err)
 		}
 
 		records := map[string]Record{}
@@ -196,7 +199,20 @@ func Sync(home string, agents []string, desired map[string]catalog.MCP, expand E
 			if slices.Contains(present, name) {
 				planned = append(planned, Action{OpRemove, file, name})
 				if err := doc.remove(name); err != nil {
-					return actions, missing, err
+					return actions, kept, missing, err
+				}
+			}
+		}
+		if opt.Purge {
+			for _, name := range slices.Sorted(slices.Values(present)) {
+				_, wanted := desired[name]
+				_, managed := state[file][name]
+				if wanted || managed {
+					continue
+				}
+				planned = append(planned, Action{OpDelete, file, name})
+				if err := doc.remove(name); err != nil {
+					return actions, kept, missing, err
 				}
 			}
 		}
@@ -204,6 +220,7 @@ func Sync(home string, agents []string, desired map[string]catalog.MCP, expand E
 			def := desired[name]
 			defHash, isPresent := hashOf(shapes, agent, def), slices.Contains(present, name)
 			if record, managed := records[name]; managed && isPresent && record.Def == defHash && record.Entry == doc.hash(name) {
+				kept = append(kept, Action{OpKeep, file, name})
 				continue
 			}
 			expanded, lacking := expand(def)
@@ -214,16 +231,18 @@ func Sync(home string, agents []string, desired map[string]catalog.MCP, expand E
 			entry := target.Render(expanded)
 			same, err := doc.same(name, entry)
 			if err != nil {
-				return actions, missing, fmt.Errorf("%s: %w", file, err)
+				return actions, kept, missing, fmt.Errorf("%s: %w", file, err)
 			}
-			if !same {
+			if same {
+				kept = append(kept, Action{OpKeep, file, name})
+			} else {
 				op := OpAdd
 				if isPresent {
 					op = OpUpdate
 				}
 				planned = append(planned, Action{op, file, name})
 				if err := doc.set(name, entry); err != nil {
-					return actions, missing, err
+					return actions, kept, missing, err
 				}
 			}
 			records[name] = Record{Def: defHash, Entry: doc.hash(name)}
@@ -234,7 +253,7 @@ func Sync(home string, agents []string, desired map[string]catalog.MCP, expand E
 		}
 		if len(planned) > 0 {
 			if err := writeFile(file, doc.bytes()); err != nil {
-				return actions, missing, err
+				return actions, kept, missing, err
 			}
 		}
 		if len(records) == 0 {
@@ -243,7 +262,7 @@ func Sync(home string, agents []string, desired map[string]catalog.MCP, expand E
 			state[file] = records
 		}
 	}
-	return actions, missing, nil
+	return actions, kept, missing, nil
 }
 
 func sortedNames(records map[string]Record) []string {

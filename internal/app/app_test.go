@@ -2,6 +2,8 @@ package app
 
 import (
 	"fmt"
+	"github.com/bonkey/skillet/internal/link"
+	"github.com/bonkey/skillet/internal/mcp"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -217,6 +219,44 @@ func TestForceReplacesConflictingEntries(t *testing.T) {
 	e.app.Force = true
 	if _, err := e.app.Toggle(e.app.Global(), true, false, "alpha"); err != nil || !isLink(blocked) {
 		t.Fatalf("with force the folder is replaced by the link: %v", err)
+	}
+}
+
+func TestSyncClearAndPurge(t *testing.T) {
+	e := setup(t)
+	withServers(t, &e)
+	if _, err := e.app.Toggle(e.app.Global(), true, false, "@ios"); err != nil {
+		t.Fatal(err)
+	}
+	global, claude := filepath.Join(e.p.Home, ".claude", "skills"), filepath.Join(e.p.Home, ".claude.json")
+	os.MkdirAll(filepath.Join(global, "hand"), 0o755)
+	write(t, claude, strings.Replace(read(t, claude), "\"mcpServers\": {", "\"mcpServers\": {\n    \"mine\": {\"command\": \"untouched\"},", 1))
+
+	report, err := e.app.Sync(e.app.Global(), SyncOptions{Purge: true, DryRun: true})
+	if err != nil || len(report.Actions) != 1 || report.Actions[0].Op != link.OpDelete || len(report.MCP) != 1 || report.MCP[0].Op != mcp.OpDelete {
+		t.Fatalf("a dry purge plans the deletions: %+v %v", report, err)
+	}
+	if _, err := os.Stat(filepath.Join(global, "hand")); err != nil || !strings.Contains(read(t, claude), "untouched") {
+		t.Fatal("a dry run deletes nothing")
+	}
+	if _, err := e.app.Sync(e.app.Global(), SyncOptions{Purge: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(global, "hand")); !os.IsNotExist(err) || strings.Contains(read(t, claude), "untouched") {
+		t.Fatal("purge deletes the folder and the entry skillet does not manage")
+	}
+	if !isLink(filepath.Join(global, "alpha")) || !strings.Contains(read(t, claude), "simctl") {
+		t.Fatal("purge leaves what skillet manages")
+	}
+
+	if _, err := e.app.Sync(e.app.Global(), SyncOptions{Clear: true}); err != nil {
+		t.Fatal(err)
+	}
+	if isLink(filepath.Join(global, "alpha")) || strings.Contains(read(t, claude), "simctl") {
+		t.Fatal("clear disables everything skillet manages")
+	}
+	if report, _ := e.app.Sync(e.app.Global(), SyncOptions{}); len(report.Actions)+len(report.MCP) != 0 {
+		t.Errorf("both packs are off in the config, so a plain sync changes nothing: %+v", report)
 	}
 }
 

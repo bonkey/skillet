@@ -31,6 +31,15 @@ func Load(file string) (Store, error) {
 	return store, nil
 }
 
+// Save writes the store as NAME = "value" lines, readable by its owner only.
+func (s Store) Save(file string) error {
+	data, err := toml.Marshal(s)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(file, data, 0o600)
+}
+
 // Expand replaces every ${NAME} in text. Names without a value stay in
 // place and are returned as missing.
 func (s Store) Expand(text string) (expanded string, missing []string) {

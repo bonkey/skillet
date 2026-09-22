@@ -53,25 +53,38 @@ func model(t *testing.T) *Model {
 	return m
 }
 
-func press(m *Model, keys ...string) {
-	for _, key := range keys {
-		msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
-		switch key {
-		case "tab":
-			msg = tea.KeyMsg{Type: tea.KeyTab}
-		case "enter":
-			msg = tea.KeyMsg{Type: tea.KeyEnter}
-		case "esc":
-			msg = tea.KeyMsg{Type: tea.KeyEsc}
-		case "down":
-			msg = tea.KeyMsg{Type: tea.KeyDown}
-		case "left":
-			msg = tea.KeyMsg{Type: tea.KeyLeft}
-		case " ":
-			msg = tea.KeyMsg{Type: tea.KeySpace, Runes: []rune(" ")}
-		}
-		m.Update(msg)
+func key(name string) tea.KeyMsg {
+	switch name {
+	case "tab":
+		return tea.KeyMsg{Type: tea.KeyTab}
+	case "enter":
+		return tea.KeyMsg{Type: tea.KeyEnter}
+	case "esc":
+		return tea.KeyMsg{Type: tea.KeyEsc}
+	case "down":
+		return tea.KeyMsg{Type: tea.KeyDown}
+	case "left":
+		return tea.KeyMsg{Type: tea.KeyLeft}
+	case " ":
+		return tea.KeyMsg{Type: tea.KeySpace, Runes: []rune(" ")}
 	}
+	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(name)}
+}
+
+func press(m *Model, keys ...string) {
+	for _, name := range keys {
+		m.Update(key(name))
+	}
+}
+
+// quits reports whether a key makes the program quit.
+func quits(m *Model, name string) bool {
+	_, cmd := m.Update(key(name))
+	if cmd == nil {
+		return false
+	}
+	_, ok := cmd().(tea.QuitMsg)
+	return ok
 }
 
 func TestRowsGroupSkillsUnderPacks(t *testing.T) {
@@ -101,17 +114,38 @@ func TestToggleSkillAndPack(t *testing.T) {
 	if view := m.View(); !strings.Contains(view, "[+] alpha") || !strings.Contains(view, "[~] @acme  1/3 once applied") || !strings.Contains(view, "1 marked") {
 		t.Errorf("the mark should show:\n%s", view)
 	}
-	press(m, "a", "n")
-	if got := enabled(t, m.app); len(got) != 0 || m.marked() != 1 {
-		t.Fatalf("a declined confirmation keeps the marks and changes nothing: %v", got)
-	}
-	press(m, "a", "y")
-	if got := enabled(t, m.app); !reflect.DeepEqual(got, []string{"alpha"}) || m.marked() != 0 {
-		t.Fatalf("after applying alpha: %v", got)
+	press(m, "a")
+	if got := enabled(t, m.app); !reflect.DeepEqual(got, []string{"alpha"}) || m.marked() != 0 || !strings.Contains(m.status, "z undoes") {
+		t.Fatalf("a applies at once: %v %q", got, m.status)
 	}
 	if !strings.Contains(m.View(), "[~] @acme  1/3 enabled") {
 		t.Errorf("pack header should show a partial state:\n%s", m.View())
 	}
+	press(m, "z")
+	if got := enabled(t, m.app); len(got) != 0 || !strings.HasPrefix(m.status, "undone") {
+		t.Fatalf("z takes the last apply back: %v %q", got, m.status)
+	}
+	press(m, "z")
+	if m.status != "nothing to undo" {
+		t.Errorf("a second z has nothing to undo: %q", m.status)
+	}
+	press(m, " ", "a")
+	if got := enabled(t, m.app); !reflect.DeepEqual(got, []string{"alpha"}) {
+		t.Fatalf("after applying alpha again: %v", got)
+	}
+	press(m, "r")
+	if got := enabled(t, m.app); len(got) != 0 || !strings.HasPrefix(m.status, "reset") {
+		t.Fatalf("r brings the session start back: %v %q", got, m.status)
+	}
+	press(m, "z")
+	if got := enabled(t, m.app); !reflect.DeepEqual(got, []string{"alpha"}) {
+		t.Fatalf("z takes the reset back: %v", got)
+	}
+	press(m, "r", "r")
+	if !strings.HasPrefix(m.status, "nothing to reset") {
+		t.Errorf("a second r has nothing to do: %q", m.status)
+	}
+	press(m, " ", "a")
 
 	press(m, " ", " ")
 	if m.marked() != 0 {
@@ -119,7 +153,7 @@ func TestToggleSkillAndPack(t *testing.T) {
 	}
 
 	m.cursor = 0
-	press(m, " ", "a", "y") // whole pack on
+	press(m, " ", "a") // whole pack on
 	if got := enabled(t, m.app); !reflect.DeepEqual(got, []string{"alpha", "beta"}) {
 		t.Fatalf("after enabling the pack: %v", got)
 	}
@@ -127,15 +161,61 @@ func TestToggleSkillAndPack(t *testing.T) {
 	if got := enabled(t, reopened); !reflect.DeepEqual(got, []string{"alpha", "beta"}) {
 		t.Errorf("the links hold the state: %v", got)
 	}
-	press(m, " ", "a", "y") // whole pack off
+	press(m, " ", "a") // whole pack off
 	if got := enabled(t, m.app); len(got) != 0 {
 		t.Fatalf("after disabling the pack: %v", got)
 	}
 }
 
+func TestQuitAsksToApplyTheMarks(t *testing.T) {
+	m := model(t)
+	if !quits(m, "q") {
+		t.Fatal("without marks q quits")
+	}
+	press(m, "down", " ")
+	if quits(m, "q") || m.mode != modeConfirm || !strings.Contains(m.View(), "before quitting") {
+		t.Fatalf("with marks q asks first:\n%s", m.View())
+	}
+	if quits(m, "esc") || m.marked() != 1 || m.mode != modeList {
+		t.Fatal("another key stays, with the marks")
+	}
+	press(m, "q")
+	if !quits(m, "n") || len(enabled(t, m.app)) != 0 {
+		t.Fatal("n quits without applying")
+	}
+	press(m, "q")
+	if !quits(m, "y") || !reflect.DeepEqual(enabled(t, m.app), []string{"alpha"}) || m.marked() != 0 {
+		t.Fatalf("y applies and quits: %v", enabled(t, m.app))
+	}
+	config := func() string {
+		data, _ := os.ReadFile(m.app.Paths.ConfigFile())
+		return string(data)
+	}
+	press(m, " ", "q") // alpha off again
+	if !quits(m, "Y") || len(enabled(t, m.app)) != 0 || !strings.Contains(config(), "{name = 'alpha', enabled = false}") {
+		t.Fatalf("Y saves, applies and quits: %v\n%s", enabled(t, m.app), config())
+	}
+}
+
+func TestSaveAppliesAndWritesTheFlags(t *testing.T) {
+	m := model(t)
+	config := func() string {
+		data, _ := os.ReadFile(m.app.Paths.ConfigFile())
+		return string(data)
+	}
+	press(m, "down", " ", "a", " ", "s") // alpha on, then off for good
+	if got := enabled(t, m.app); len(got) != 0 || !strings.HasPrefix(m.status, "saved and applied") || !strings.Contains(config(), "{name = 'alpha', enabled = false}") {
+		t.Fatalf("s saves and applies: %v %q\n%s", got, m.status, config())
+	}
+	press(m, "z")
+	if got := enabled(t, m.app); !reflect.DeepEqual(got, []string{"alpha"}) || strings.Contains(config(), "enabled = false") {
+		t.Fatalf("z takes a saved apply back in the file too: %v\n%s", got, config())
+	}
+}
+
 func TestScopeSwitchTogglesInTheProject(t *testing.T) {
 	m := model(t)
-	press(m, "down", "down", " ", "tab", "k", " ", "a", "y") // beta globally, alpha in the project
+	press(m, "down", "down", " ", "tab", "k", " ", "a") // beta globally, alpha in the project
 	if got := enabled(t, m.app); !m.scope.Project || !reflect.DeepEqual(got, []string{"beta"}) {
 		t.Fatalf("one confirmation applies the marks of both scopes: %+v %v", m.scope, got)
 	}
@@ -184,7 +264,7 @@ func TestViewFitsTheTerminal(t *testing.T) {
 func TestToggleServer(t *testing.T) {
 	m := model(t)
 	m.cursor = 3 // mcp:simctl
-	press(m, " ", "a", "y")
+	press(m, " ", "a")
 	if !m.view.MCPs["simctl"].Global {
 		t.Fatalf("after toggling the server: %+v", m.view.MCPs["simctl"])
 	}

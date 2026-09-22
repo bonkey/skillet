@@ -97,7 +97,7 @@ is a source, and a bare name or "name@source" is a skill.`,
 	}
 	cmd.PersistentFlags().BoolVar(&force, "force", false,
 		"delete files, folders and links that stand where an enabled skill goes, and link the skill")
-	cmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "print every link and config entry that changes")
+	cmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "print every link and config entry, also those that are already right")
 	cmd.PersistentFlags().StringSliceVar(&agents, "agents", nil,
 		"act on these agents instead of those in the catalog (comma separated)")
 	cmd.AddCommand(importCmd(), toggleCmd(true), toggleCmd(false),
@@ -128,9 +128,11 @@ func tilde(text string) string {
 }
 
 // printSync prints one line per kind of change, and every change with
-// --verbose. Problems are always printed in full.
+// --verbose, followed by what was already right. Problems are always
+// printed in full.
 func printSync(report app.SyncReport) {
-	skills, servers := map[string][]string{}, map[string][]string{}
+	skills, servers := map[string][]string{}, map[string]map[string][]string{}
+	var files []string // config files in the order the agents were visited
 	for _, action := range report.Actions {
 		if verbose || action.Op == link.OpConflict {
 			fmt.Println(tilde(action.String()))
@@ -143,20 +145,34 @@ func printSync(report app.SyncReport) {
 		if verbose {
 			fmt.Println(tilde(action.String()))
 		}
-		if !slices.Contains(servers[action.Op], action.Name) {
-			servers[action.Op] = append(servers[action.Op], action.Name)
+		if servers[action.Op] == nil {
+			servers[action.Op] = map[string][]string{}
+		}
+		servers[action.Op][action.File] = append(servers[action.Op][action.File], action.Name)
+		if !slices.Contains(files, action.File) {
+			files = append(files, action.File)
+		}
+	}
+	if verbose {
+		for _, action := range report.Kept {
+			fmt.Println(tilde(action.String()))
+		}
+		for _, action := range report.KeptMCP {
+			fmt.Println(tilde(action.String()))
 		}
 	}
 	scope := tilde(report.Scope.String())
 	if !verbose {
-		for _, op := range []string{link.OpLink, link.OpRelink, link.OpReplace, link.OpUnlink} {
+		for _, op := range []string{link.OpLink, link.OpRelink, link.OpReplace, link.OpUnlink, link.OpDelete} {
 			if names := skills[op]; len(names) > 0 {
 				fmt.Printf("%-8s %s: %s\n", op, scope, strings.Join(names, ", "))
 			}
 		}
-		for _, op := range []string{mcp.OpAdd, mcp.OpUpdate, mcp.OpRemove} {
-			if names := servers[op]; len(names) > 0 {
-				fmt.Printf("%-12s %s\n", op, strings.Join(names, ", "))
+		for _, op := range []string{mcp.OpAdd, mcp.OpUpdate, mcp.OpRemove, mcp.OpDelete} {
+			for _, file := range files {
+				if names := servers[op][file]; len(names) > 0 {
+					fmt.Printf("%-12s %s: %s\n", op, tilde(file), strings.Join(names, ", "))
+				}
 			}
 		}
 	}
@@ -188,7 +204,9 @@ Only the definitions (source and skill name) come from the lock. The content
 of every source is fetched fresh. Each imported skill's folder in
 ~/.agents/skills is DELETED; where a configured agent reads that directory, a
 link into the fetched clone takes its place. Folders that are not in the lock
-stay. Review with --dry-run first.`,
+stay. The MCP servers in the configs of Claude Code, Codex and Gemini CLI
+join the catalog too; values that look like secrets are replaced by ${NAME}
+placeholders and kept in secrets.toml. Review with --dry-run first.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := open()
@@ -218,6 +236,12 @@ stay. Review with --dry-run first.`,
 				verb = "would import"
 			}
 			fmt.Printf("%s %d skills from %d sources in %d packs\n", verb, len(report.Imported), len(a.Catalog.Sources), len(a.Catalog.Packs))
+			if len(report.Servers) > 0 {
+				fmt.Printf("%s %d servers from the agents' configs: %s\n", verb, len(report.Servers), strings.Join(report.Servers, ", "))
+			}
+			if len(report.Secrets) > 0 {
+				fmt.Printf("secrets  %s: values kept in %s\n", strings.Join(report.Secrets, ", "), tilde(a.Paths.SecretsFile()))
+			}
 			return nil
 		},
 	}
@@ -261,7 +285,7 @@ back with the next sync.`}
 }
 
 func syncCmd() *cobra.Command {
-	var dryRun, remove bool
+	var dryRun, remove, clear, purge bool
 	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Enable what the config files switch on and repair the links (global and the project)",
@@ -271,12 +295,18 @@ Every entry of config.toml is on unless its "enabled" flag is false; the
 project's .skillet.toml switches on its own entries. Sources without a clone
 are cloned, every agent directory gets the same links, and a link follows a
 skill that moved inside its source. What is enabled although its config
-file switches it off stays and is reported as "extra"; --remove disables it.`,
+file switches it off stays and is reported as "extra"; --remove disables it.
+--clear disables everything skillet manages in the scope, and --purge deletes
+the skills and servers skillet does not manage from the agents' directories
+and configs, so that they hold the catalog and nothing else. Both are meant
+to be tried with --dry-run first.`,
 		Args: cobra.NoArgs,
 	}
 	scope := scopeFlags(cmd)
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "only print what would change")
 	cmd.Flags().BoolVar(&remove, "remove", false, "disable what the config file switches off")
+	cmd.Flags().BoolVar(&clear, "clear", false, "disable everything skillet manages in the scope")
+	cmd.Flags().BoolVar(&purge, "purge", false, "delete the skills and servers skillet does not manage from the agents")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		a, err := open()
 		if err != nil {
@@ -294,10 +324,13 @@ file switches it off stays and is reported as "extra"; --remove disables it.`,
 		}
 		verbose = verbose || dryRun
 		for _, s := range scopes {
-			report, err := a.Sync(s, app.SyncOptions{DryRun: dryRun, Remove: remove})
+			report, err := a.Sync(s, app.SyncOptions{DryRun: dryRun, Remove: remove, Clear: clear, Purge: purge})
 			printSync(report)
 			if err != nil {
 				return err
+			}
+			if len(report.Actions)+len(report.MCP)+len(report.Missing)+len(report.MissingSecrets)+len(report.Extra) == 0 {
+				fmt.Println("nothing to change in", tilde(s.String()))
 			}
 		}
 		return nil

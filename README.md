@@ -44,6 +44,43 @@ skillet needs `git`; the gist commands need the `gh` CLI, and 1Password secrets 
 Archives for macOS and Linux are attached to each
 [release](https://github.com/bonkey/skillet/releases).
 
+## Quick start
+
+1. Write the catalog. [`examples/config.toml`](examples/config.toml) is a start with one skill:
+
+   ```sh
+   mkdir -p ~/.config/skillet && cp examples/config.toml ~/.config/skillet/config.toml
+   ```
+
+   Add a `[[skills]]` entry per repository you want and a `[[mcps]]` entry per server, then group
+   them into packs. The [Config](#config) section shows every key.
+
+2. Switch it on. `sync` clones the sources, links every skill that is on into the agents' skills
+   directories and writes the servers into their configs:
+
+   ```sh
+   skillet sync
+   skillet list                             # what is on, and where
+   ```
+
+3. Take over what is already there. `import` reads the lock file of `npx skills` and the MCP
+   servers in the configs of Claude Code, Codex and Gemini CLI into the catalog, moving values
+   that look like secrets into `~/.config/skillet/secrets.toml`:
+
+   ```sh
+   skillet import --dry-run
+   skillet import
+   ```
+
+   Skills installed by hand and servers the catalog does not know stay until you say so. `sync
+   --purge` deletes them from the agents, `sync --clear` takes out everything skillet manages,
+   and both accept `--dry-run`:
+
+   ```sh
+   skillet sync --purge --dry-run           # what would go
+   skillet sync --purge                     # the agents hold the catalog, nothing else
+   ```
+
 ## Main uses
 
 You write the catalog: sources, packs and servers go into `config.toml` by hand. skillet reads it
@@ -52,7 +89,7 @@ and switches things on and off. In commands, `@name` is a pack, `mcp:name` is an
 working directory; the default is the global scope. `skillet <command> --help` lists every flag.
 
 ```sh
-skillet                                  # TUI: browse, search, mark what to switch, apply it all at once
+skillet                                  # TUI: browse, search, mark what to switch, apply or save it at once, undo, reset
 
 skillet import --dry-run                 # take over an existing `npx skills` install
 skillet import
@@ -63,7 +100,9 @@ skillet disable --save @craft            # and switch it off in the config, so s
 skillet enable -p @craft                 # in this project
 skillet run @craft -- claude             # only while the command runs
 skillet sync                             # enable what the config files switch on, repair the links
-skillet sync --remove                    # and disable everything else
+skillet sync --remove                    # and disable what they switch off
+skillet sync --purge                     # and delete the skills and servers skillet does not manage
+skillet sync --clear                     # disable everything skillet manages
 
 skillet list 'swift|ios' --enabled       # search names and descriptions; terms may be regexps
 skillet sources                          # every source with the ref it tracks and its commit
@@ -80,12 +119,15 @@ of a config file is on unless it says `enabled = false`: `sync` enables what is 
 that have no clone yet, gives every agent directory the same links and lets a link follow a skill
 that moved inside its source. What is enabled although its config file switches it off stays, and
 `sync` reports it as `extra`; `sync --remove` disables it. Commands print one line per kind of
-change; `--verbose` prints every link.
+change, and per agent config for servers; `--verbose` prints every link and server entry, also
+those that were already right.
 
 `import` reads `~/.agents/.skill-lock.json`, fetches every source, creates one pack per source and
 enables everything. It **deletes** the folder of every imported skill in
 `~/.agents/skills`; where a configured agent reads that directory, a link takes its place. Folders
-the lock does not list stay.
+the lock does not list stay. It also reads the MCP servers of Claude Code, Codex and Gemini CLI
+into the catalog: an environment variable, header or URL parameter whose name looks like a secret
+becomes a `${NAME}` placeholder, and its value goes to `secrets.toml`.
 
 [`skills/skillet`](skills/skillet/SKILL.md) teaches agents to search the catalog before looking for
 skills elsewhere, and to enable and disable what they find.
