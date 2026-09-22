@@ -180,7 +180,7 @@ func printSync(report app.SyncReport) {
 		fmt.Printf("missing  %s is enabled but not found in its source\n", name)
 	}
 	if len(report.Extra) > 0 {
-		fmt.Printf("extra    %s: enabled in %s but switched off in its config file; `sync --remove` disables them\n",
+		fmt.Printf("extra    %s: enabled in %s but switched off in its config file; `sync --clean` disables them\n",
 			strings.Join(report.Extra, ", "), scope)
 	}
 	for _, name := range sortedKeys(report.MissingSecrets) {
@@ -285,7 +285,7 @@ back with the next sync.`}
 }
 
 func syncCmd() *cobra.Command {
-	var dryRun, remove, disableAll, purge, disableSkills, disableMCPs bool
+	var dryRun, clean, disableAll, purge, disableSkills, disableMCPs bool
 	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Enable what the config files switch on and repair the links (global and the project)",
@@ -295,7 +295,7 @@ Every entry of config.toml is on unless its "enabled" flag is false; the
 project's .skillet.toml switches on its own entries. Sources without a clone
 are cloned, every agent directory gets the same links, and a link follows a
 skill that moved inside its source. What is enabled although its config
-file switches it off stays and is reported as "extra"; --remove disables it.
+file switches it off stays and is reported as "extra"; --clean disables it.
 --disable-skills unlinks every skill skillet manages in the scope and
 --disable-mcps removes every server entry it manages, except those of running
 sessions; --disable-all is both. The config files stay as they are, so the next
@@ -307,7 +307,7 @@ with --dry-run first.`,
 	}
 	scope := scopeFlags(cmd)
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "only print what would change")
-	cmd.Flags().BoolVar(&remove, "remove", false, "disable what the config file switches off")
+	cmd.Flags().BoolVar(&clean, "clean", false, "disable what the config file switches off")
 	cmd.Flags().BoolVar(&disableSkills, "disable-skills", false, "unlink every skill skillet manages in the scope")
 	cmd.Flags().BoolVar(&disableMCPs, "disable-mcps", false, "remove every server entry skillet manages from the agents' configs")
 	cmd.Flags().BoolVar(&disableAll, "disable-all", false, "both --disable-skills and --disable-mcps")
@@ -332,7 +332,7 @@ with --dry-run first.`,
 		}
 		verbose = verbose || dryRun
 		for _, s := range scopes {
-			report, err := a.Sync(s, app.SyncOptions{DryRun: dryRun, Remove: remove, DisableAll: disableAll,
+			report, err := a.Sync(s, app.SyncOptions{DryRun: dryRun, Remove: clean, DisableAll: disableAll,
 				DisableSkills: disableSkills, DisableMCPs: disableMCPs, Purge: purge})
 			printSync(report)
 			if err != nil {

@@ -100,7 +100,7 @@ skillet disable --save @craft            # and switch it off in the config, so s
 skillet enable -p @craft                 # in this project
 skillet run @craft -- claude             # only while the command runs
 skillet sync                             # enable what the config files switch on, repair the links
-skillet sync --remove                    # and disable what they switch off
+skillet sync --clean                     # and disable what they switch off
 skillet sync --purge                     # and delete the skills and servers skillet does not manage
 skillet sync --disable-mcps              # remove every server entry skillet manages; the config still switches them on
 skillet sync --disable-all               # disable everything skillet manages
@@ -119,7 +119,7 @@ MCP configs; with `--save` they also flip the entry's `enabled` flag in the conf
 of a config file is on unless it says `enabled = false`: `sync` enables what is on, clones sources
 that have no clone yet, gives every agent directory the same links and lets a link follow a skill
 that moved inside its source. What is enabled although its config file switches it off stays, and
-`sync` reports it as `extra`; `sync --remove` disables it. Commands print one line per kind of
+`sync` reports it as `extra`; `sync --clean` disables it. Commands print one line per kind of
 change, and per agent config for servers; `--verbose` prints every link and server entry, also
 those that were already right.
 

@@ -139,7 +139,7 @@ running in; suggest the command to the user.
 | --- | --- | --- |
 | `conflict <path> exists and is not managed by skillet` | A file, folder or foreign link stands where the skill goes. | Show the path to the user. With their consent, rerun the same command with `--force`, which deletes that entry. |
 | `missing <skill> is enabled but not found in its source` | The source is not cloned, or the skill left the repository. | Run `skillet update`, then `skillet sync`. If it stays missing, tell the user. |
-| `extra <names>: enabled in <scope> but switched off …` | `sync` found skills or servers that are enabled although the scope's config file switches them off. They stay enabled. | Nothing, unless the user wants only what the file switches on: then `skillet sync --remove`, with their consent. |
+| `extra <names>: enabled in <scope> but switched off …` | `sync` found skills or servers that are enabled although the scope's config file switches them off. They stay enabled. | Nothing, unless the user wants only what the file switches on: then `skillet sync --clean`, with their consent. |
 | `unknown skill "<name>"` or `unknown pack "<name>"` | The name is not in the catalog. | Check `skillet list --json`. If the skill is not there, adding its source to `config.toml` is the user's call. |
 | `the home directory cannot be a project` | `-p` was used in `~`. | Use the global scope, or change to the project directory. |
 | `warning: gist …` | An included gist could not be reached; its cached copy is in use. | Carry on. Mention it if the user expected fresh data. |
