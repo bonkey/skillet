@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 	"slices"
 	"sort"
@@ -19,6 +20,7 @@ import (
 	"github.com/bonkey/skillet/internal/mcp"
 	"github.com/bonkey/skillet/internal/paths"
 	"github.com/bonkey/skillet/internal/tui"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // The global flags.
@@ -128,57 +130,29 @@ func tilde(text string) string {
 	return text
 }
 
-// printSync prints one line per kind of change, and every change with
-// --verbose, followed by what was already right and by the packs the
-// enabled and disabled skills and servers belong to. Problems are always
-// printed in full.
-func printSync(cat *catalog.Catalog, report app.SyncReport) {
-	skills, servers := map[string][]string{}, map[string]map[string][]string{}
-	var files []string // config files in the order the agents were visited
-	for _, action := range report.Actions {
-		if verbose || action.Op == link.OpConflict {
-			fmt.Println(tilde(action.String()))
-		}
-		if !slices.Contains(skills[action.Op], action.Name) {
-			skills[action.Op] = append(skills[action.Op], action.Name)
-		}
-	}
-	for _, action := range report.MCP {
-		if verbose {
-			fmt.Println(tilde(action.String()))
-		}
-		if servers[action.Op] == nil {
-			servers[action.Op] = map[string][]string{}
-		}
-		servers[action.Op][action.File] = append(servers[action.Op][action.File], action.Name)
-		if !slices.Contains(files, action.File) {
-			files = append(files, action.File)
-		}
-	}
+// printSync prints a table of the scope's skills and servers with one
+// column per agent, or with --verbose every link and config entry, what was
+// already right, and the packs the enabled and disabled skills and servers
+// belong to. Problems are always printed in full.
+func printSync(a *app.App, report app.SyncReport) {
 	if verbose {
+		for _, action := range report.Actions {
+			fmt.Println(tilde(action.String()))
+		}
+		for _, action := range report.MCP {
+			fmt.Println(tilde(action.String()))
+		}
 		for _, action := range report.Kept {
 			fmt.Println(tilde(action.String()))
 		}
 		for _, action := range report.KeptMCP {
 			fmt.Println(tilde(action.String()))
 		}
-		printMembership(cat, report)
+		printMembership(a.Catalog, report)
+	} else {
+		printTable(a, report)
 	}
 	scope := tilde(report.Scope.String())
-	if !verbose {
-		for _, op := range []string{link.OpLink, link.OpRelink, link.OpReplace, link.OpUnlink, link.OpDelete} {
-			if names := skills[op]; len(names) > 0 {
-				fmt.Printf("%-8s %s: %s\n", op, scope, strings.Join(names, ", "))
-			}
-		}
-		for _, op := range []string{mcp.OpAdd, mcp.OpUpdate, mcp.OpRemove, mcp.OpDelete} {
-			for _, file := range files {
-				if names := servers[op][file]; len(names) > 0 {
-					fmt.Printf("%-12s %s: %s\n", op, tilde(file), strings.Join(names, ", "))
-				}
-			}
-		}
-	}
 	for _, name := range report.Missing {
 		fmt.Printf("missing  %s is enabled but not found in its source\n", name)
 	}
@@ -193,6 +167,144 @@ func printSync(cat *catalog.Catalog, report app.SyncReport) {
 	for _, note := range report.Notes {
 		fmt.Println("note    ", tilde(note))
 	}
+}
+
+// mark is one cell of the sync table.
+type mark int
+
+const (
+	markNone     mark = iota // the agent has no such directory or config
+	markKeep                 // already right
+	markAdd                  // linked or written now
+	markRepair               // relinked or rewritten
+	markRemove               // unlinked or removed
+	markConflict             // something in the way
+)
+
+// glyphs are the cells of the sync table: Nerd Font symbols on a terminal,
+// letters when the output is piped, so that a program can read them.
+var (
+	nerdGlyphs  = [...]string{"\uf068", "\uf00c", "\uf067", "\uf021", "\uf00d", "\uf071"}
+	asciiGlyphs = [...]string{"-", "ok", "+", "~", "x", "!"}
+	glyphNames  = [...]string{"absent", "kept", "added", "repaired", "removed", "conflict"}
+	glyphStyles = [...]lipgloss.Style{
+		lipgloss.NewStyle().Faint(true),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("2")),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("3")),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true),
+	}
+)
+
+func markOf(op string) mark {
+	switch op {
+	case link.OpKeep, mcp.OpKeep:
+		return markKeep
+	case link.OpLink, link.OpReplace, mcp.OpAdd:
+		return markAdd
+	case link.OpRelink, mcp.OpUpdate:
+		return markRepair
+	case link.OpUnlink, link.OpDelete, mcp.OpRemove, mcp.OpDelete:
+		return markRemove
+	case link.OpConflict:
+		return markConflict
+	}
+	return markNone
+}
+
+// shortAgent is the column header of an agent.
+func shortAgent(name string) string {
+	for _, suffix := range []string{"-code", "-cli"} {
+		name = strings.TrimSuffix(name, suffix)
+	}
+	return strings.TrimPrefix(name, "github-")
+}
+
+// printTable prints one row per skill, named by its folder inside the
+// clones, and per server, with one column per configured agent.
+func printTable(a *app.App, report app.SyncReport) {
+	type column struct{ name, dir, file string }
+	var columns []column
+	for _, name := range a.Catalog.Agents {
+		col := column{name: name}
+		if agent, ok := link.Agents[name]; ok {
+			rel := agent.Global
+			if report.Scope.Project {
+				rel = agent.Project
+			}
+			if rel != "" {
+				col.dir = filepath.Join(report.Scope.Root, filepath.FromSlash(rel))
+			}
+		}
+		if target, ok := mcp.Targets[name]; ok && !report.Scope.Project {
+			col.file = filepath.Join(a.Paths.Home, filepath.FromSlash(target.File))
+		}
+		columns = append(columns, col)
+	}
+	if len(columns) == 0 {
+		return
+	}
+	repos := a.Paths.ReposDir() + string(filepath.Separator)
+	rows := map[string]map[string]mark{}
+	place := func(label string, cell mark, hit func(column) bool) {
+		if rows[label] == nil {
+			rows[label] = map[string]mark{}
+		}
+		for _, col := range columns {
+			if hit(col) && cell > rows[label][col.name] {
+				rows[label][col.name] = cell
+			}
+		}
+	}
+	for _, action := range slices.Concat(report.Actions, report.Kept) {
+		label := action.Name
+		if action.Target != "" {
+			label = strings.TrimPrefix(action.Target, repos)
+		} else if found, ok := a.Index.Lookup(a.Catalog, action.Name); ok {
+			label = strings.TrimPrefix(found.Dir, repos)
+		}
+		place(label, markOf(action.Op), func(col column) bool { return col.dir == action.Dir })
+	}
+	for _, action := range slices.Concat(report.MCP, report.KeptMCP) {
+		place(catalog.MCPPrefix+action.Name, markOf(action.Op), func(col column) bool { return col.file == action.File })
+	}
+	if len(rows) == 0 {
+		return
+	}
+	glyphs := asciiGlyphs
+	if term.IsTerminal(int(os.Stdout.Fd())) {
+		glyphs = nerdGlyphs
+	}
+	title := tilde(report.Scope.String())
+	width := len(title)
+	for label := range rows {
+		width = max(width, len(label))
+	}
+	fmt.Printf("%-*s", width, title)
+	for _, col := range columns {
+		fmt.Printf("  %s", shortAgent(col.name))
+	}
+	fmt.Println()
+	used := map[mark]bool{}
+	for _, label := range sortedKeys(rows) {
+		fmt.Printf("%-*s", width, label)
+		for _, col := range columns {
+			cell := rows[label][col.name]
+			used[cell] = true
+			name, span := shortAgent(col.name), lipgloss.Width(glyphs[cell])
+			pad := (len(name) - span) / 2
+			fmt.Printf("  %*s%s%*s", pad, "", glyphStyles[cell].Render(glyphs[cell]), len(name)-pad-span, "")
+		}
+		fmt.Println()
+	}
+	var legend []string
+	for cell := markNone; cell <= markConflict; cell++ {
+		if used[cell] {
+			legend = append(legend, glyphStyles[cell].Render(glyphs[cell])+" "+glyphNames[cell])
+		}
+	}
+	fmt.Println(glyphStyles[markNone].Render(strings.Join(legend, "   ")))
 }
 
 // printMembership prints, per pack, the skills and servers that a report
@@ -300,7 +412,7 @@ placeholders and kept in secrets.toml. Review with --dry-run first.`,
 			if err != nil {
 				return err
 			}
-			printSync(a.Catalog, report.Sync)
+			printSync(a, report.Sync)
 			for _, old := range sortedKeys(report.Renamed) {
 				fmt.Printf("renamed  %s is called %s in its source; the link named %[1]s stays in place\n", old, report.Renamed[old])
 			}
@@ -355,7 +467,7 @@ back with the next sync.`}
 			return err
 		}
 		report, err := a.Toggle(s, enable, save, args...)
-		printSync(a.Catalog, report)
+		printSync(a, report)
 		if err == nil && len(report.Actions)+len(report.MCP)+len(report.Missing)+len(report.MissingSecrets) == 0 {
 			fmt.Println("nothing to change in", tilde(s.String()))
 		}
@@ -414,7 +526,7 @@ with --dry-run first.`,
 		for _, s := range scopes {
 			report, err := a.Sync(s, app.SyncOptions{DryRun: dryRun, Remove: clean, DisableAll: disableAll,
 				DisableSkills: disableSkills, DisableMCPs: disableMCPs, Purge: purge})
-			printSync(a.Catalog, report)
+			printSync(a, report)
 			if err != nil {
 				return err
 			}
@@ -538,7 +650,7 @@ func updateCmd() *cobra.Command {
 				return err
 			}
 			updates, err := a.Update(check)
-			printSync(a.Catalog, a.LastSync)
+			printSync(a, a.LastSync)
 			failed := 0
 			for _, u := range updates {
 				switch {
@@ -691,7 +803,7 @@ so gists that include each other do no harm.`,
 			for _, warning := range a.Warnings {
 				fmt.Fprintln(os.Stderr, "warning:", warning)
 			}
-			printSync(a.Catalog, a.LastSync)
+			printSync(a, a.LastSync)
 			fmt.Printf(done+"\n", id)
 			return nil
 		}
