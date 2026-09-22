@@ -264,11 +264,24 @@ func printTable(a *app.App, report app.SyncReport) {
 	scope := tilde(report.Scope.String())
 	used := map[mark]bool{}
 	printed := false
-	for _, table := range []struct {
+	tables := []struct {
 		title   string
 		columns []column
 		rows    map[string]map[string]mark
-	}{{scope + " skills", dirs, skills}, {scope + " mcp", files, servers}} {
+	}{{scope + " skills", dirs, skills}, {scope + " mcp", files, servers}}
+	// Both tables share the width of the first column, so that their agent
+	// columns line up.
+	width := 0
+	for _, table := range tables {
+		if len(table.rows) == 0 || len(table.columns) == 0 {
+			continue
+		}
+		width = max(width, len(table.title))
+		for label := range table.rows {
+			width = max(width, len(label)+2) // rows are indented below their pack
+		}
+	}
+	for _, table := range tables {
 		if len(table.rows) == 0 || len(table.columns) == 0 {
 			continue
 		}
@@ -276,11 +289,6 @@ func printTable(a *app.App, report app.SyncReport) {
 			fmt.Println()
 		}
 		printed = true
-		width := len(table.title)
-		for label := range table.rows {
-			width = max(width, len(label))
-		}
-		width += 2 // rows are indented below their pack
 		fmt.Printf("%-*s", width, table.title)
 		for _, col := range table.columns {
 			fmt.Printf("  %s", shortAgent(col.name))
