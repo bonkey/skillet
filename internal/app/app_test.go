@@ -260,6 +260,29 @@ func TestSyncClearAndPurge(t *testing.T) {
 	}
 }
 
+func TestSourcePathLimitsTheSkills(t *testing.T) {
+	e := setup(t)
+	write(t, filepath.Join(e.origin, "apps/extra/alpha/SKILL.md"), "---\nname: alpha\ndescription: Alpha, the extra one\n---\n")
+	write(t, filepath.Join(e.origin, "apps/extra/gamma/SKILL.md"), "---\nname: gamma\ndescription: The gamma skill\n---\n")
+	git(t, e.origin, "add", "-A")
+	git(t, e.origin, "commit", "-q", "-m", "extra")
+	e.open(t, fmt.Sprintf("agents = ['claude-code']\n\n[[skills]]\nurl = %q\npath = 'apps/extra'\n\n"+
+		"[[packs]]\nname = 'acme'\ndescription = 'Acme skills'\nskills = ['skills']\n", e.origin))
+	dir := filepath.Join(e.p.Home, ".claude", "skills")
+	for name, want := range map[string]string{"alpha": "apps/extra/alpha", "gamma": "apps/extra/gamma"} {
+		target, err := os.Readlink(filepath.Join(dir, name))
+		if err != nil || target != filepath.Join(e.p.RepoDir("skills"), want) {
+			t.Errorf("%s -> %s, want %s (%v)", name, target, want, err)
+		}
+	}
+	if isLink(filepath.Join(dir, "beta")) {
+		t.Error("beta is outside the path and must not be linked")
+	}
+	if got := e.app.Sources()[0]; got.Path != "apps/extra" {
+		t.Errorf("the sources view lacks the path: %+v", got)
+	}
+}
+
 func TestSyncDisablesOneKind(t *testing.T) {
 	e := setup(t)
 	withServers(t, &e)

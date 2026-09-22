@@ -159,6 +159,7 @@ url = "https://github.com/dietrichgebert/ponytail.git"
 name = "wondel"                                # optional: it would be "skills" otherwise
 url = "https://github.com/wondelai/skills.git"
 ref = "main"                                   # optional: branch, tag, or full commit hash
+path = "apps/skills"                           # optional: the directory that holds the skills
 only = ["clean-code", { name = "top-design", enabled = false }]   # optional: without it, every skill
 
 [[mcps]]                                       # a command makes a local server, named after the package
@@ -183,6 +184,8 @@ item = "klmnopqrst"
   when two sources without a `name` share that segment, both become `owner-repo`. `only` limits
   the source to the listed skills; without it, `update` brings in the skills the source gains.
   `update` moves a branch `ref` forward; a tag or a commit keeps the version you evaluated.
+  `path` takes the skills from that directory of the repository and ignores the rest; two
+  entries of one repository with different paths need distinct `name`s.
   `enabled = false` switches a source off; an `only` entry written `{ name = "x", enabled = false }`
   switches one skill off, also in a source that takes all. A list keeps at least one skill on,
   since a list without one takes all: switch the source off instead. Skills are written `name` or

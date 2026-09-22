@@ -134,6 +134,7 @@ type SourceView struct {
 	Name   string `json:"name"`
 	URL    string `json:"url"`
 	Ref    string `json:"ref,omitempty"`
+	Path   string `json:"path,omitempty"`   // the directory inside the repository that holds the skills
 	Commit string `json:"commit,omitempty"` // empty when the source is not cloned
 	Skills int    `json:"skills"`
 }
@@ -143,7 +144,7 @@ func (a *App) Sources() []SourceView {
 	var out []SourceView
 	for _, name := range a.SourceNames() {
 		src := a.Catalog.Sources[name]
-		view := SourceView{Name: name, URL: src.URL, Ref: src.Ref, Skills: len(src.Skills)}
+		view := SourceView{Name: name, URL: src.URL, Ref: src.Ref, Path: src.Path, Skills: len(src.Skills)}
 		if indexed, ok := a.Index.Sources[name]; ok {
 			view.Commit = indexed.Head
 		}

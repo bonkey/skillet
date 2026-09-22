@@ -529,7 +529,7 @@ func sourcesCmd() *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "sources",
-		Short: "List sources with the ref they track and the commit their clone is at",
+		Short: "List sources with the ref they track, the commit their clone is at and their path",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := open()
@@ -549,7 +549,11 @@ func sourcesCmd() *cobra.Command {
 				if commit == "" {
 					commit = "not cloned"
 				}
-				fmt.Printf("%-24s %-24s %-10s %3d skills\n", src.Name, ref, commit, src.Skills)
+				in := ""
+				if src.Path != "" {
+					in = " in " + src.Path
+				}
+				fmt.Printf("%-24s %-24s %-10s %3d skills%s\n", src.Name, ref, commit, src.Skills, in)
 			}
 			return nil
 		},

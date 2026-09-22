@@ -81,7 +81,7 @@ func (a *App) Import(lockFile string, dryRun bool) (ImportReport, error) {
 			}
 			continue
 		}
-		found, err := source.Discover(a.Paths.RepoDir(names[i]))
+		found, err := source.Discover(a.Paths.RepoDir(names[i]), "")
 		if err != nil {
 			return report, err
 		}

@@ -112,17 +112,24 @@ func Checkout(dir, commit string) error {
 	return err
 }
 
-// Discover finds the skills in a directory tree, keyed by name. A root
-// SKILL.md makes the whole tree one skill. Folders below a skill are not
-// searched. When a name occurs twice, the shallowest folder wins.
-func Discover(root string) (map[string]Skill, error) {
+// Discover finds the skills in a clone, keyed by name, searching below sub
+// when it is set; paths stay relative to the clone root. A SKILL.md at the
+// searched root makes the whole tree one skill. Folders below a skill are
+// not searched. When a name occurs twice, the shallowest folder wins. A sub
+// that does not exist holds no skills.
+func Discover(root, sub string) (map[string]Skill, error) {
 	skills := map[string]Skill{}
-	if _, err := os.Stat(filepath.Join(root, "SKILL.md")); err == nil {
-		name, skill := read(root, ".")
+	start := filepath.Join(root, filepath.FromSlash(sub))
+	if info, err := os.Stat(start); err != nil || !info.IsDir() {
+		return skills, nil
+	}
+	if _, err := os.Stat(filepath.Join(start, "SKILL.md")); err == nil {
+		rel, _ := filepath.Rel(root, start)
+		name, skill := read(root, filepath.ToSlash(rel))
 		skills[name] = skill
 		return skills, nil
 	}
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(start, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || !d.IsDir() {
 			return err
 		}

@@ -23,6 +23,9 @@ type Source struct {
 	Name string `toml:"name,omitempty"`
 	URL  string `toml:"url"`
 	Ref  string `toml:"ref,omitempty"`
+	// Path is the directory inside the repository that holds the skills;
+	// empty for the whole repository.
+	Path string `toml:"path,omitempty"`
 	// Enabled switches the source and all its skills off when false.
 	Enabled *bool `toml:"enabled,omitempty"`
 	// Skills names the skills taken from the source: the entries of `only`
@@ -118,6 +121,7 @@ type fileSource struct {
 	Name    string `toml:"name,omitempty"`
 	URL     string `toml:"url"`
 	Ref     string `toml:"ref,omitempty"`
+	Path    string `toml:"path,omitempty"`
 	Enabled *bool  `toml:"enabled,omitempty"`
 	Only    []any  `toml:"only,omitempty,inline"`
 }
@@ -128,7 +132,10 @@ type onlyFlag struct {
 }
 
 func (f *fileSource) source() (*Source, error) {
-	src := &Source{Name: f.Name, URL: f.URL, Ref: f.Ref, Enabled: f.Enabled}
+	if !validPath(f.Path) {
+		return nil, fmt.Errorf("source %s: path %q must be a relative directory without empty or .. segments", f.URL, f.Path)
+	}
+	src := &Source{Name: f.Name, URL: f.URL, Ref: f.Ref, Path: f.Path, Enabled: f.Enabled}
 	for _, entry := range f.Only {
 		switch v := entry.(type) {
 		case string:
@@ -150,8 +157,22 @@ func (f *fileSource) source() (*Source, error) {
 	return src, nil
 }
 
+// validPath accepts an empty path or slash-separated segments that are
+// neither empty nor "." nor "..".
+func validPath(path string) bool {
+	if path == "" {
+		return true
+	}
+	for _, segment := range strings.Split(path, "/") {
+		if segment == "" || segment == "." || segment == ".." {
+			return false
+		}
+	}
+	return true
+}
+
 func fileSourceOf(src *Source) *fileSource {
-	f := &fileSource{Name: src.Name, URL: src.URL, Ref: src.Ref, Enabled: src.Enabled}
+	f := &fileSource{Name: src.Name, URL: src.URL, Ref: src.Ref, Path: src.Path, Enabled: src.Enabled}
 	for _, skill := range src.Skills {
 		if src.SkillOn(skill) {
 			f.Only = append(f.Only, skill)
@@ -730,7 +751,7 @@ func Merge(local *Catalog, ids []string, included []*Catalog) (*Catalog, error) 
 				continue
 			}
 			if src.takesAll() {
-				merged.Sources[name] = &Source{URL: src.URL, Ref: src.Ref, Enabled: src.Enabled,
+				merged.Sources[name] = &Source{URL: src.URL, Ref: src.Ref, Path: src.Path, Enabled: src.Enabled,
 					Skills: slices.Clone(src.Disabled), Disabled: slices.Clone(src.Disabled), All: true}
 				merged.SourceOrigin[name] = ids[i]
 				continue
@@ -740,7 +761,7 @@ func Merge(local *Catalog, ids []string, included []*Catalog) (*Catalog, error) 
 					continue
 				}
 				if _, ok := merged.Sources[name]; !ok {
-					merged.Sources[name] = &Source{URL: src.URL, Ref: src.Ref, Enabled: src.Enabled}
+					merged.Sources[name] = &Source{URL: src.URL, Ref: src.Ref, Path: src.Path, Enabled: src.Enabled}
 					merged.SourceOrigin[name] = ids[i]
 				}
 				merged.Sources[name].Skills = add(merged.Sources[name].Skills, skill)

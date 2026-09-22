@@ -759,6 +759,9 @@ func (m *Model) source(name string) string {
 		if len(commit) > 8 {
 			commit = commit[:8]
 		}
+		if src.Path != "" {
+			return fmt.Sprintf("%s @ %s (%s) in %s", name, ref, commit, src.Path)
+		}
 		return fmt.Sprintf("%s @ %s (%s)", name, ref, commit)
 	}
 	return name

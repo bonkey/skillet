@@ -53,6 +53,30 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSourcePath(t *testing.T) {
+	c, err := Parse([]byte("[[skills]]\nurl = 'https://github.com/acme/skills.git'\npath = 'apps/skills/extra'\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Sources["skills"].Path != "apps/skills/extra" {
+		t.Fatalf("path not read: %+v", c.Sources["skills"])
+	}
+	data, err := c.Encode()
+	if err != nil || !strings.Contains(string(data), "path = 'apps/skills/extra'") {
+		t.Errorf("path not written: %s %v", data, err)
+	}
+	for _, bad := range []string{"/apps", "apps/../etc", "apps//skills", "./apps", "apps/"} {
+		_, err := Parse([]byte("[[skills]]\nurl = 'https://github.com/acme/skills.git'\npath = '" + bad + "'\n"))
+		if err == nil || !strings.Contains(err.Error(), bad) {
+			t.Errorf("path %q accepted: %v", bad, err)
+		}
+	}
+	merged, err := Merge(New(), []string{"g"}, []*Catalog{c})
+	if err != nil || merged.Sources["skills"].Path != "apps/skills/extra" {
+		t.Errorf("an included source keeps its path: %+v %v", merged.Sources["skills"], err)
+	}
+}
+
 func TestResolve(t *testing.T) {
 	c := sample()
 	tests := []struct {

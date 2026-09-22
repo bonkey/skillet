@@ -69,7 +69,7 @@ func TestDiscover(t *testing.T) {
 	write(t, filepath.Join(dir, "plugins/p/skills/alpha/SKILL.md"), "---\nname: alpha\ndescription: copy\n---\n")
 	write(t, filepath.Join(dir, ".git/SKILL.md"), "---\nname: hidden\n---\n")
 
-	got, err := Discover(dir)
+	got, err := Discover(dir, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,19 +81,37 @@ func TestDiscover(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %+v\nwant %+v", got, want)
 	}
+
+	// A sub directory limits the search; paths stay relative to the clone.
+	got, err = Discover(dir, "plugins/p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = map[string]Skill{"alpha": {Path: "plugins/p/skills/alpha", Description: "copy"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("below plugins/p: got %+v\nwant %+v", got, want)
+	}
+	if got, err := Discover(dir, "nowhere"); err != nil || len(got) != 0 {
+		t.Errorf("a missing sub directory holds no skills: %+v %v", got, err)
+	}
 }
 
 func TestDiscoverRootSkill(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "my-repo")
 	write(t, filepath.Join(dir, "SKILL.md"), "---\nname: root-skill\ndescription: Root\n---\n")
 	write(t, filepath.Join(dir, "examples/other/SKILL.md"), "---\nname: other\n---\n")
-	got, err := Discover(dir)
+	got, err := Discover(dir, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := map[string]Skill{"root-skill": {Path: ".", Description: "Root"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %+v", got)
+	}
+	got, _ = Discover(dir, "examples/other")
+	want = map[string]Skill{"other": {Path: "examples/other"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("a SKILL.md at the sub directory is the one skill: got %+v", got)
 	}
 }
 
@@ -186,6 +204,18 @@ func TestIndexBuildsAndRebuilds(t *testing.T) {
 	idx, _ = LoadIndex(p, c)
 	if _, ok := idx.Lookup(c, "alpha"); !ok {
 		t.Error("index not rebuilt after deletion")
+	}
+
+	// A changed path is rebuilt without a new commit.
+	c.Sources["skills"].Path = "skills/alpha"
+	idx, _ = LoadIndex(p, c)
+	if got, ok := idx.Lookup(c, "alpha"); !ok || got.Dir != filepath.Join(p.RepoDir("skills"), "skills/alpha") {
+		t.Errorf("lookup below the path: %+v %v", got, ok)
+	}
+	c.Sources["skills"].Path = "elsewhere"
+	idx, _ = LoadIndex(p, c)
+	if _, ok := idx.Lookup(c, "alpha"); ok {
+		t.Error("a path without the skill must not resolve it")
 	}
 }
 

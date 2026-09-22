@@ -10,7 +10,7 @@ import (
 )
 
 // Index caches what Discover found in each clone. It is rebuilt per source
-// whenever the clone's HEAD differs from the cached one.
+// whenever the clone's HEAD or the source's path differs from the cached one.
 type Index struct {
 	Sources map[string]*SourceIndex `json:"sources"`
 	paths   paths.Paths
@@ -18,6 +18,7 @@ type Index struct {
 
 type SourceIndex struct {
 	Head   string           `json:"head"`
+	Path   string           `json:"path,omitempty"` // the source's path key when it was indexed
 	Skills map[string]Skill `json:"skills"`
 }
 
@@ -44,7 +45,7 @@ func LoadIndex(p paths.Paths, c *catalog.Catalog) (*Index, error) {
 			dirty = true
 		}
 	}
-	for name := range c.Sources {
+	for name, src := range c.Sources {
 		dir := p.RepoDir(name)
 		head, err := Head(dir)
 		if err != nil {
@@ -54,14 +55,14 @@ func LoadIndex(p paths.Paths, c *catalog.Catalog) (*Index, error) {
 			}
 			continue
 		}
-		if cached, ok := idx.Sources[name]; ok && cached.Head == head {
+		if cached, ok := idx.Sources[name]; ok && cached.Head == head && cached.Path == src.Path {
 			continue
 		}
-		skills, err := Discover(dir)
+		skills, err := Discover(dir, src.Path)
 		if err != nil {
 			return nil, err
 		}
-		idx.Sources[name] = &SourceIndex{Head: head, Skills: skills}
+		idx.Sources[name] = &SourceIndex{Head: head, Path: src.Path, Skills: skills}
 		dirty = true
 	}
 	if dirty {
