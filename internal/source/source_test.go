@@ -145,9 +145,9 @@ func TestIndexBuildsAndRebuilds(t *testing.T) {
 	origin := remote(t)
 	p := paths.Paths{Data: t.TempDir()}
 	c := catalog.New()
-	c.Sources["acme/skills"] = &catalog.Source{URL: origin, Skills: []string{"alpha", "gone"}}
-	c.Sources["not/cloned"] = &catalog.Source{URL: origin, Skills: []string{"x"}}
-	if err := Clone(origin, "", p.RepoDir("acme/skills")); err != nil {
+	c.Sources["skills"] = &catalog.Source{URL: origin, Skills: []string{"alpha", "gone"}}
+	c.Sources["not-cloned"] = &catalog.Source{URL: origin, Skills: []string{"x"}}
+	if err := Clone(origin, "", p.RepoDir("skills")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -156,7 +156,7 @@ func TestIndexBuildsAndRebuilds(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, ok := idx.Lookup(c, "alpha")
-	if !ok || got.Description != "Alpha: does things" || got.Dir != filepath.Join(p.RepoDir("acme/skills"), "skills/alpha") {
+	if !ok || got.Description != "Alpha: does things" || got.Dir != filepath.Join(p.RepoDir("skills"), "skills/alpha") {
 		t.Fatalf("lookup alpha: %+v %v", got, ok)
 	}
 	if _, ok := idx.Lookup(c, "gone"); ok {
@@ -172,8 +172,8 @@ func TestIndexBuildsAndRebuilds(t *testing.T) {
 	// A stale cache entry is rebuilt when the clone moves on.
 	write(t, filepath.Join(origin, "skills/alpha/SKILL.md"), "---\nname: alpha\ndescription: New text\n---\n")
 	gitT(t, origin, "commit", "-qam", "describe")
-	latest, _ := Fetch(p.RepoDir("acme/skills"), "")
-	if err := Checkout(p.RepoDir("acme/skills"), latest); err != nil {
+	latest, _ := Fetch(p.RepoDir("skills"), "")
+	if err := Checkout(p.RepoDir("skills"), latest); err != nil {
 		t.Fatal(err)
 	}
 	idx, _ = LoadIndex(p, c)

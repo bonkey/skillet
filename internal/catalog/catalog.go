@@ -16,12 +16,21 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
+// Source is a git repository of skills. In the catalog it goes by its
+// name: the explicit one, or else the repository name from the URL.
 type Source struct {
-	URL string `toml:"url"`
-	Ref string `toml:"ref,omitempty"`
-	// Skills names the skills taken from the source. Without any, the
-	// source takes all the skills it offers.
-	Skills []string `toml:"skills,omitempty"`
+	// Name is the explicit name of the source; empty for a derived one.
+	Name string `toml:"name,omitempty"`
+	URL  string `toml:"url"`
+	Ref  string `toml:"ref,omitempty"`
+	// Enabled switches the source and all its skills off when false.
+	Enabled *bool `toml:"enabled,omitempty"`
+	// Skills names the skills taken from the source: the entries of `only`
+	// in the file. Without an entry that is on, the source takes all the
+	// skills it offers.
+	Skills []string `toml:"-"`
+	// Disabled lists the entries of `only` that are switched off.
+	Disabled []string `toml:"-"`
 	// All marks, in a merged catalog, a source that takes all skills. Its
 	// Skills then hold what ExpandAll found on offer.
 	All bool `toml:"-"`
@@ -29,26 +38,20 @@ type Source struct {
 
 type Pack struct {
 	Description string `toml:"description"`
-	// Sources puts every catalog skill of these sources into the pack.
-	Sources []string `toml:"sources,omitempty"`
-	Skills  []string `toml:"skills,omitempty"`
-	MCPs    []string `toml:"mcps,omitempty"`
+	// Enabled switches the pack and what it holds off when false.
+	Enabled *bool `toml:"enabled,omitempty"`
+	// Skills holds skill references and source names; a source name puts
+	// every catalog skill of the source into the pack.
+	Skills []string `toml:"skills,omitempty"`
+	MCPs   []string `toml:"mcps,omitempty"`
 }
 
-// Set names what to enable: what a config file declares for its scope, what
-// the links of a scope hold, or what a `run` session adds.
+// Set names what is enabled: what the links and MCP entries of a scope
+// hold, or what a `run` session adds.
 type Set struct {
 	Packs  []string `toml:"packs,omitempty"`
 	Skills []string `toml:"skills,omitempty"`
 	MCPs   []string `toml:"mcps,omitempty"`
-	// Except switches off single skills, and servers written "mcp:name",
-	// that a pack or an included catalog enables.
-	Except []string `toml:"except,omitempty"`
-
-	// Inherited and InheritedMCPs list what included catalogs enable. They
-	// are never written to a file.
-	Inherited     []string `toml:"-"`
-	InheritedMCPs []string `toml:"-"`
 }
 
 type Catalog struct {
@@ -59,18 +62,21 @@ type Catalog struct {
 	// Secrets lists 1Password items whose fields are the values of ${NAME}
 	// placeholders. Only the local catalog's list is used; an included
 	// catalog never chooses where secrets come from.
-	Secrets []SecretItem       `toml:"secrets,omitempty"`
-	Agents  []string           `toml:"agents"`
-	Sources map[string]*Source `toml:"sources"`
-	MCPs    map[string]*MCP    `toml:"mcps,omitempty"`
+	Secrets []SecretItem `toml:"secrets,omitempty"`
+	Agents  []string     `toml:"agents"`
+	// Sources and MCPs are keyed by the effective name of each entry. The
+	// file holds them as arrays of tables; see fileCatalog.
+	Sources map[string]*Source `toml:"-"`
+	MCPs    map[string]*MCP    `toml:"-"`
 	Packs   map[string]*Pack   `toml:"packs"`
-	Enabled Set                `toml:"enabled"`
 
-	// SkillOrigin, MCPOrigin and PackOrigin name the gist an entry of a
-	// merged catalog was included from. Entries of the local catalog are absent.
-	SkillOrigin map[string]string `toml:"-"`
-	MCPOrigin   map[string]string `toml:"-"`
-	PackOrigin  map[string]string `toml:"-"`
+	// SkillOrigin, SourceOrigin, MCPOrigin and PackOrigin name the gist an
+	// entry of a merged catalog was included from. Entries of the local
+	// catalog are absent.
+	SkillOrigin  map[string]string `toml:"-"`
+	SourceOrigin map[string]string `toml:"-"`
+	MCPOrigin    map[string]string `toml:"-"`
+	PackOrigin   map[string]string `toml:"-"`
 }
 
 func New() *Catalog {
@@ -82,41 +88,157 @@ func New() *Catalog {
 	}
 }
 
+// fileCatalog is the catalog as its file holds it: sources under
+// [[skills]] and servers under [[mcps]], each named by an optional key.
+type fileCatalog struct {
+	Gist     string           `toml:"gist,omitempty"`
+	Includes []string         `toml:"includes,omitempty"`
+	Secrets  []SecretItem     `toml:"secrets,omitempty"`
+	Agents   []string         `toml:"agents"`
+	Packs    map[string]*Pack `toml:"packs"`
+	Skills   []*fileSource    `toml:"skills,omitempty"`
+	MCPs     []*MCP           `toml:"mcps,omitempty"`
+}
+
+// fileSource is a [[skills]] entry. Only holds names and, for a skill that
+// is switched off, tables of the shape { name = "x", enabled = false }.
+type fileSource struct {
+	Name    string `toml:"name,omitempty"`
+	URL     string `toml:"url"`
+	Ref     string `toml:"ref,omitempty"`
+	Enabled *bool  `toml:"enabled,omitempty"`
+	Only    []any  `toml:"only,omitempty,inline"`
+}
+
+type onlyFlag struct {
+	Name    string `toml:"name"`
+	Enabled bool   `toml:"enabled"`
+}
+
+func (f *fileSource) source() (*Source, error) {
+	src := &Source{Name: f.Name, URL: f.URL, Ref: f.Ref, Enabled: f.Enabled}
+	for _, entry := range f.Only {
+		switch v := entry.(type) {
+		case string:
+			src.Skills = append(src.Skills, v)
+		case map[string]any:
+			name, _ := v["name"].(string)
+			enabled, isBool := v["enabled"].(bool)
+			if name == "" || !isBool {
+				return nil, fmt.Errorf("source %s: only holds %v; use a name or { name, enabled }", f.URL, entry)
+			}
+			src.Skills = append(src.Skills, name)
+			if !enabled {
+				src.Disabled = append(src.Disabled, name)
+			}
+		default:
+			return nil, fmt.Errorf("source %s: only holds %v; use a name or { name, enabled }", f.URL, entry)
+		}
+	}
+	return src, nil
+}
+
+func fileSourceOf(src *Source) *fileSource {
+	f := &fileSource{Name: src.Name, URL: src.URL, Ref: src.Ref, Enabled: src.Enabled}
+	for _, skill := range src.Skills {
+		if src.SkillOn(skill) {
+			f.Only = append(f.Only, skill)
+		} else {
+			f.Only = append(f.Only, onlyFlag{Name: skill})
+		}
+	}
+	return f
+}
+
 func Load(file string) (*Catalog, error) {
-	c := New()
 	data, err := os.ReadFile(file)
 	if errors.Is(err, fs.ErrNotExist) {
-		return c, nil
+		return New(), nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	if err := toml.Unmarshal(data, c); err != nil {
+	c, err := Parse(data)
+	if err != nil {
 		return nil, fmt.Errorf("%s: %w", file, err)
-	}
-	if c.Sources == nil {
-		c.Sources = map[string]*Source{}
-	}
-	if c.Packs == nil {
-		c.Packs = map[string]*Pack{}
-	}
-	if c.MCPs == nil {
-		c.MCPs = map[string]*MCP{}
-	}
-	for _, name := range c.MCPNames() {
-		if err := c.MCPs[name].Validate(name); err != nil {
-			return nil, fmt.Errorf("%s: %w", file, err)
-		}
 	}
 	return c, nil
 }
 
-func (c *Catalog) Save(file string) error { return writeTOML(file, c) }
+// Parse reads a catalog file. Sources and servers get their names, and
+// servers are validated.
+func Parse(data []byte) (*Catalog, error) {
+	var f fileCatalog
+	if err := toml.Unmarshal(data, &f); err != nil {
+		return nil, err
+	}
+	c := New()
+	c.Gist, c.Includes, c.Secrets = f.Gist, f.Includes, f.Secrets
+	if f.Agents != nil {
+		c.Agents = f.Agents
+	}
+	if f.Packs != nil {
+		c.Packs = f.Packs
+	}
+	sources := make([]*Source, len(f.Skills))
+	for i, entry := range f.Skills {
+		src, err := entry.source()
+		if err != nil {
+			return nil, err
+		}
+		sources[i] = src
+	}
+	names, err := sourceNames(sources)
+	if err != nil {
+		return nil, err
+	}
+	for i, src := range sources {
+		c.Sources[names[i]] = src
+	}
+	for _, def := range f.MCPs {
+		name, err := def.name()
+		if err != nil {
+			return nil, err
+		}
+		if err := def.Validate(name); err != nil {
+			return nil, err
+		}
+		if _, dup := c.MCPs[name]; dup {
+			return nil, fmt.Errorf("two mcp servers are named %q; set name on one", name)
+		}
+		c.MCPs[name] = def
+	}
+	return c, nil
+}
+
+// Encode renders the catalog as its file, sources and servers sorted by name.
+func (c *Catalog) Encode() ([]byte, error) {
+	f := fileCatalog{Gist: c.Gist, Includes: c.Includes, Secrets: c.Secrets, Agents: c.Agents, Packs: c.Packs}
+	for _, name := range sortedKeys(c.Sources) {
+		f.Skills = append(f.Skills, fileSourceOf(c.Sources[name]))
+	}
+	for _, name := range c.MCPNames() {
+		f.MCPs = append(f.MCPs, c.MCPs[name])
+	}
+	data, err := toml.Marshal(f)
+	if err != nil {
+		return nil, err
+	}
+	return tidy(data), nil
+}
+
+func (c *Catalog) Save(file string) error {
+	data, err := c.Encode()
+	if err != nil {
+		return err
+	}
+	return writeFile(file, data)
+}
 
 var (
 	// A table header that only introduces its sub-tables.
 	parentHeader = regexp.MustCompile(`(?m)^\[([^\]\n]+)\]\n(\[([^\]\n]+)\]\n)`)
-	nameList     = regexp.MustCompile(`(?m)^(skills|mcps|packs|except|sources) = \[(.*)\]$`)
+	nameList     = regexp.MustCompile(`(?m)^(skills|mcps|packs|except|only) = \[(.*)\]$`)
 )
 
 // tidy makes the encoder's output pleasant to edit: parent tables without
@@ -138,7 +260,7 @@ func tidy(data []byte) []byte {
 	}
 	text = nameList.ReplaceAllStringFunc(text, func(line string) string {
 		m := nameList.FindStringSubmatch(line)
-		if len(line) <= 100 {
+		if len(line) <= 100 || strings.Contains(m[2], "{") {
 			return line
 		}
 		return m[1] + " = [\n  " + strings.ReplaceAll(m[2], ", ", ",\n  ") + ",\n]"
@@ -146,12 +268,7 @@ func tidy(data []byte) []byte {
 	return []byte(text)
 }
 
-func writeTOML(file string, v any) error {
-	data, err := toml.Marshal(v)
-	if err != nil {
-		return err
-	}
-	data = tidy(data)
+func writeFile(file string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
 		return err
 	}
@@ -195,27 +312,23 @@ func (c *Catalog) PackNames() []string {
 	return names
 }
 
-// PackSkills lists the skills of a pack: those it names and those of the
-// sources it names.
+// PackSkills lists the skills of a pack: those it names and every skill
+// of the sources it names.
 func (c *Catalog) PackSkills(name string) []string {
 	pack, ok := c.Packs[name]
 	if !ok {
 		return nil
 	}
 	var skills []string
-	for _, ref := range pack.Skills {
-		if skill, ok := c.resolveRef(ref); ok {
-			skills = add(skills, skill)
-		}
-	}
-	for _, source := range pack.Sources {
-		if src, ok := c.Sources[source]; ok {
+	for _, member := range pack.Skills {
+		if src, ok := c.Sources[member]; ok {
 			for _, skill := range src.Skills {
 				skills = add(skills, skill)
 			}
+		} else if skill, ok := c.resolveRef(member); ok {
+			skills = add(skills, skill)
 		}
 	}
-	sort.Strings(skills)
 	return skills
 }
 
@@ -244,14 +357,6 @@ func (c *Catalog) Resolve(s Set) []string {
 			on[skill] = true
 		}
 	}
-	for _, skill := range s.Inherited {
-		on[skill] = true
-	}
-	for _, ref := range s.Except {
-		if skill, ok := c.resolveRef(ref); ok {
-			delete(on, skill)
-		}
-	}
 	var out []string
 	for skill := range on {
 		if c.HasSkill(skill) {
@@ -262,86 +367,92 @@ func (c *Catalog) Resolve(s Set) []string {
 	return out
 }
 
-// Enable switches on skills, servers ("mcp:name") and packs ("@name") in a set.
+// Enable switches on skills, servers ("mcp:name"), packs ("@name") and
+// whole sources ("skills:name") in a set.
 func (c *Catalog) Enable(s *Set, names ...string) error {
-	if err := c.check(names); err != nil {
+	if err := c.Check(names); err != nil {
 		return err
 	}
 	for _, name := range names {
-		if pack, ok := strings.CutPrefix(name, "@"); ok {
-			s.Packs = add(s.Packs, pack)
-			for _, skill := range c.PackSkills(pack) {
-				s.Except = removeRef(s.Except, skill)
+		switch kind, rest := kindOf(name); kind {
+		case kindPack:
+			s.Packs = add(s.Packs, rest)
+		case kindMCP:
+			if !slices.Contains(c.ResolveMCPs(*s), rest) {
+				s.MCPs = add(s.MCPs, rest)
 			}
-			for _, server := range c.Packs[pack].MCPs {
-				s.Except = remove(s.Except, MCPPrefix+server)
+		case kindSource:
+			for _, skill := range c.Sources[rest].Skills {
+				c.enableSkill(s, skill)
 			}
-			continue
-		}
-		if server, ok := strings.CutPrefix(name, MCPPrefix); ok {
-			c.enableMCP(s, server)
-			continue
-		}
-		skill, _ := SplitRef(name)
-		s.Except = removeRef(s.Except, skill)
-		if !slices.Contains(c.Resolve(*s), skill) {
-			s.Skills = addRef(s.Skills, c.Qualify(skill))
+		default:
+			skill, _ := SplitRef(name)
+			c.enableSkill(s, skill)
 		}
 	}
 	return nil
 }
 
-// Disable switches off skills, servers ("mcp:name") and packs ("@name") in a
-// set. An entry that a still-enabled pack provides becomes an exception.
+func (c *Catalog) enableSkill(s *Set, skill string) {
+	if !slices.Contains(c.Resolve(*s), skill) {
+		s.Skills = addRef(s.Skills, c.Qualify(skill))
+	}
+}
+
+// Disable switches off skills, servers ("mcp:name"), packs ("@name") and
+// whole sources ("skills:name") in a set.
 func (c *Catalog) Disable(s *Set, names ...string) error {
-	if err := c.check(names); err != nil {
+	if err := c.Check(names); err != nil {
 		return err
 	}
 	for _, name := range names {
-		if pack, ok := strings.CutPrefix(name, "@"); ok {
-			s.Packs = remove(s.Packs, pack)
-			for _, skill := range c.PackSkills(pack) {
-				c.disableSkill(s, skill)
+		switch kind, rest := kindOf(name); kind {
+		case kindPack:
+			s.Packs = remove(s.Packs, rest)
+			for _, skill := range c.PackSkills(rest) {
+				s.Skills = removeRef(s.Skills, skill)
 			}
-			for _, server := range c.Packs[pack].MCPs {
-				c.disableMCP(s, server)
+			for _, server := range c.Packs[rest].MCPs {
+				s.MCPs = remove(s.MCPs, server)
 			}
-			continue
+		case kindMCP:
+			s.MCPs = remove(s.MCPs, rest)
+		case kindSource:
+			for _, skill := range c.Sources[rest].Skills {
+				s.Skills = removeRef(s.Skills, skill)
+			}
+		default:
+			skill, _ := SplitRef(name)
+			s.Skills = removeRef(s.Skills, skill)
 		}
-		if server, ok := strings.CutPrefix(name, MCPPrefix); ok {
-			c.disableMCP(s, server)
-			continue
-		}
-		skill, _ := SplitRef(name)
-		c.disableSkill(s, skill)
 	}
 	return nil
 }
 
-func (c *Catalog) disableSkill(s *Set, skill string) {
-	s.Skills = removeRef(s.Skills, skill)
-	s.Except = removeRef(s.Except, skill)
-	if slices.Contains(c.Resolve(*s), skill) {
-		s.Except = addRef(s.Except, c.Qualify(skill))
-	}
-}
-
-func (c *Catalog) check(names []string) error {
+// Check rejects names the catalog does not know.
+func (c *Catalog) Check(names []string) error {
 	for _, name := range names {
-		if pack, ok := strings.CutPrefix(name, "@"); ok {
-			if _, ok := c.Packs[pack]; !ok {
-				return fmt.Errorf("unknown pack %q", pack)
+		switch kind, rest := kindOf(name); kind {
+		case kindPack:
+			if _, ok := c.Packs[rest]; !ok {
+				return fmt.Errorf("unknown pack %q", rest)
 			}
-		} else if server, ok := strings.CutPrefix(name, MCPPrefix); ok {
-			if _, ok := c.MCPs[server]; !ok {
-				return fmt.Errorf("unknown mcp server %q", server)
+		case kindMCP:
+			if _, ok := c.MCPs[rest]; !ok {
+				return fmt.Errorf("unknown mcp server %q", rest)
 			}
-		} else if _, ok := c.resolveRef(name); !ok {
-			if skill, source := SplitRef(name); source != "" && c.HasSkill(skill) {
-				owner, _ := c.SourceOf(skill)
-				return fmt.Errorf("skill %q comes from %s, not from %s", skill, owner, source)
+		case kindSource:
+			if _, ok := c.Sources[rest]; !ok {
+				return fmt.Errorf("unknown source %q", rest)
 			}
-			return fmt.Errorf("unknown skill %q", name)
+		default:
+			if _, ok := c.resolveRef(name); !ok {
+				if skill, source := SplitRef(name); source != "" && c.HasSkill(skill) {
+					owner, _ := c.SourceOf(skill)
+					return fmt.Errorf("skill %q comes from %s, not from %s", skill, owner, source)
+				}
+				return fmt.Errorf("unknown skill %q", name)
+			}
 		}
 	}
 	return nil
@@ -375,26 +486,96 @@ func (c *Catalog) ExpandAll(offered map[string][]string) {
 	}
 }
 
-// AddSkills records skills under a source, creating the source when needed.
-// A source that takes all skills needs no names and stays as it is.
-func (c *Catalog) AddSkills(source, url, ref string, skills []string) error {
-	if src, ok := c.Sources[source]; ok && len(src.Skills) == 0 {
-		return nil
+// AddSkills records skills under the source at url, adding the source when
+// needed, and returns the source's name. A source that takes all skills
+// needs no names and stays as it is.
+func (c *Catalog) AddSkills(url, ref string, skills []string) (string, error) {
+	name, src := c.SourceAt(url)
+	if src != nil && src.takesAll() {
+		return name, nil
 	}
 	for _, skill := range skills {
-		if owner, ok := c.SourceOf(skill); ok && owner != source {
-			return fmt.Errorf("skill %q is already in the catalog from %s", skill, owner)
+		if owner, ok := c.SourceOf(skill); ok && owner != name {
+			return "", fmt.Errorf("skill %q is already in the catalog from %s", skill, owner)
 		}
 	}
-	src, ok := c.Sources[source]
-	if !ok {
+	if src == nil {
 		src = &Source{URL: url, Ref: ref}
-		c.Sources[source] = src
+		if err := c.addSource(src); err != nil {
+			return "", err
+		}
+		name, _ = c.SourceAt(url)
 	}
 	for _, skill := range skills {
 		src.Skills = add(src.Skills, skill)
 	}
+	return name, nil
+}
+
+// SourceAt finds the source with a URL.
+func (c *Catalog) SourceAt(url string) (string, *Source) {
+	for _, name := range sortedKeys(c.Sources) {
+		if c.Sources[name].URL == url {
+			return name, c.Sources[name]
+		}
+	}
+	return "", nil
+}
+
+// sourceList lists the sources in name order.
+func (c *Catalog) sourceList() []*Source {
+	var list []*Source
+	for _, name := range sortedKeys(c.Sources) {
+		list = append(list, c.Sources[name])
+	}
+	return list
+}
+
+// addSource records a source and names every source again: a new one may
+// share a repository name with an existing one, which renames both.
+func (c *Catalog) addSource(src *Source) error {
+	list := append(c.sourceList(), src)
+	names, err := sourceNames(list)
+	if err != nil {
+		return err
+	}
+	c.Sources = map[string]*Source{}
+	for i, s := range list {
+		c.Sources[names[i]] = s
+	}
 	return nil
+}
+
+// NamesFor gives the names sources would have once they are all in the
+// catalog, since a new repository name can rename an existing source. One
+// whose URL the catalog holds already keeps the name it has.
+func (c *Catalog) NamesFor(sources []*Source) ([]string, error) {
+	list := c.sourceList()
+	known := map[string]string{}
+	for _, name := range sortedKeys(c.Sources) {
+		known[c.Sources[name].URL] = name
+	}
+	var added []*Source
+	for _, src := range sources {
+		if _, ok := known[src.URL]; !ok {
+			added = append(added, src)
+		}
+	}
+	names, err := sourceNames(append(list, added...))
+	if err != nil {
+		return nil, err
+	}
+	for i, src := range list {
+		known[src.URL] = names[i]
+	}
+	for i, src := range added {
+		known[src.URL] = names[len(list)+i]
+	}
+	out := make([]string, len(sources))
+	for i, src := range sources {
+		out[i] = known[src.URL]
+	}
+	return out, nil
 }
 
 func (c *Catalog) CreatePack(name, description string, skills []string) error {
@@ -412,8 +593,9 @@ func (c *Catalog) CreatePack(name, description string, skills []string) error {
 	return nil
 }
 
-// PackAdd puts skills, servers ("mcp:name") and whole sources
-// ("owner/repo") into a pack. Skills are recorded with their source.
+// PackAdd puts skills, servers ("mcp:name") and whole sources into a pack.
+// A member that names a source is that source; "name@source" is always a
+// skill. Skills are recorded with their source.
 func (c *Catalog) PackAdd(name string, members []string) error {
 	pack, ok := c.Packs[name]
 	if !ok {
@@ -436,13 +618,13 @@ func (c *Catalog) PackAdd(name string, members []string) error {
 			return fmt.Errorf("unknown skill %q", member)
 		}
 	}
-	for i, member := range recorded {
-		if _, isSource := c.Sources[members[i]]; isSource {
-			pack.Sources = add(pack.Sources, member)
+	for _, member := range recorded {
+		if _, isSource := c.Sources[member]; isSource {
+			pack.Skills = add(pack.Skills, member)
 		} else if server, ok := strings.CutPrefix(member, MCPPrefix); ok {
 			pack.MCPs = add(pack.MCPs, server)
 		} else if skill, _ := SplitRef(member); !slices.Contains(c.packSourceSkills(pack), skill) {
-			pack.Skills = addRef(pack.Skills, member)
+			pack.Skills = c.addPackRef(pack.Skills, member)
 		}
 	}
 	return nil
@@ -451,12 +633,24 @@ func (c *Catalog) PackAdd(name string, members []string) error {
 // packSourceSkills lists the skills a pack holds through its sources.
 func (c *Catalog) packSourceSkills(pack *Pack) []string {
 	var skills []string
-	for _, source := range pack.Sources {
-		if src, ok := c.Sources[source]; ok {
+	for _, member := range pack.Skills {
+		if src, ok := c.Sources[member]; ok {
 			skills = append(skills, src.Skills...)
 		}
 	}
 	return skills
+}
+
+// addPackRef records a skill once in a pack, replacing another spelling of
+// it. A member that names a source stays.
+func (c *Catalog) addPackRef(list []string, ref string) []string {
+	name, _ := SplitRef(ref)
+	out := slices.DeleteFunc(slices.Clone(list), func(entry string) bool {
+		_, isSource := c.Sources[entry]
+		entryName, _ := SplitRef(entry)
+		return !isSource && entryName == name
+	})
+	return add(out, ref)
 }
 
 func add(list []string, item string) []string {
@@ -478,21 +672,21 @@ func remove(list []string, item string) []string {
 
 // Merge returns the catalog that results from including others in local, in
 // the given order. The local catalog wins a name clash, then the earlier
-// include: a skill keeps its first source, a source its first URL and ref,
-// a server and a pack their first definition. What the included catalogs
-// enable becomes the inherited part of the merged enabled set.
+// include: a skill keeps its first source, a source its first URL, ref and
+// flag, a server and a pack their first definition.
 func Merge(local *Catalog, ids []string, included []*Catalog) (*Catalog, error) {
-	data, err := toml.Marshal(local)
+	data, err := local.Encode()
 	if err != nil {
 		return nil, err
 	}
-	merged := New()
-	if err := toml.Unmarshal(data, merged); err != nil {
+	merged, err := Parse(data)
+	if err != nil {
 		return nil, err
 	}
-	merged.SkillOrigin, merged.MCPOrigin, merged.PackOrigin = map[string]string{}, map[string]string{}, map[string]string{}
+	merged.SkillOrigin, merged.SourceOrigin = map[string]string{}, map[string]string{}
+	merged.MCPOrigin, merged.PackOrigin = map[string]string{}, map[string]string{}
 	for _, src := range merged.Sources {
-		src.All = len(src.Skills) == 0
+		src.All = src.takesAll()
 	}
 	for i, inc := range included {
 		for _, name := range sortedKeys(inc.Sources) {
@@ -500,8 +694,10 @@ func Merge(local *Catalog, ids []string, included []*Catalog) (*Catalog, error) 
 			if own, ok := merged.Sources[name]; ok && own.All {
 				continue
 			}
-			if len(src.Skills) == 0 {
-				merged.Sources[name] = &Source{URL: src.URL, Ref: src.Ref, All: true}
+			if src.takesAll() {
+				merged.Sources[name] = &Source{URL: src.URL, Ref: src.Ref, Enabled: src.Enabled,
+					Skills: slices.Clone(src.Disabled), Disabled: slices.Clone(src.Disabled), All: true}
+				merged.SourceOrigin[name] = ids[i]
 				continue
 			}
 			for _, skill := range src.Skills {
@@ -509,9 +705,13 @@ func Merge(local *Catalog, ids []string, included []*Catalog) (*Catalog, error) 
 					continue
 				}
 				if _, ok := merged.Sources[name]; !ok {
-					merged.Sources[name] = &Source{URL: src.URL, Ref: src.Ref}
+					merged.Sources[name] = &Source{URL: src.URL, Ref: src.Ref, Enabled: src.Enabled}
+					merged.SourceOrigin[name] = ids[i]
 				}
 				merged.Sources[name].Skills = add(merged.Sources[name].Skills, skill)
+				if !src.SkillOn(skill) {
+					merged.Sources[name].Disabled = add(merged.Sources[name].Disabled, skill)
+				}
 				merged.SkillOrigin[skill] = ids[i]
 			}
 		}
@@ -525,20 +725,10 @@ func Merge(local *Catalog, ids []string, included []*Catalog) (*Catalog, error) 
 		for _, name := range sortedKeys(inc.Packs) {
 			if _, ok := merged.Packs[name]; !ok {
 				pack := inc.Packs[name]
-				merged.Packs[name] = &Pack{Description: pack.Description, Sources: slices.Clone(pack.Sources),
+				merged.Packs[name] = &Pack{Description: pack.Description, Enabled: pack.Enabled,
 					Skills: slices.Clone(pack.Skills), MCPs: slices.Clone(pack.MCPs)}
 				merged.PackOrigin[name] = ids[i]
 			}
-		}
-	}
-	for _, inc := range included {
-		set := inc.Enabled
-		set.Inherited, set.InheritedMCPs = nil, nil
-		for _, skill := range merged.Resolve(set) {
-			merged.Enabled.Inherited = add(merged.Enabled.Inherited, skill)
-		}
-		for _, server := range merged.ResolveMCPs(set) {
-			merged.Enabled.InheritedMCPs = add(merged.Enabled.InheritedMCPs, server)
 		}
 	}
 	return merged, nil

@@ -78,8 +78,8 @@ func root() *cobra.Command {
 		Long: `A local catalog of agent skills, enabled per scope with symlinks.
 
 Without a command, skillet opens the TUI.
-In arguments, "@name" is a pack, "mcp:name" is an MCP server, and a bare name
-or "name@owner/repo" is a skill.`,
+In arguments, "@name" is a pack, "mcp:name" is an MCP server, "skills:name"
+is a source, and a bare name or "name@source" is a skill.`,
 		Version:       buildVersion(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -164,7 +164,7 @@ func printSync(report app.SyncReport) {
 		fmt.Printf("missing  %s is enabled but not found in its source\n", name)
 	}
 	if len(report.Extra) > 0 {
-		fmt.Printf("extra    %s: enabled in %s without being declared in its config file; `sync --remove` disables them\n",
+		fmt.Printf("extra    %s: enabled in %s but switched off in its config file; `sync --remove` disables them\n",
 			strings.Join(report.Extra, ", "), scope)
 	}
 	for _, name := range sortedKeys(report.MissingSecrets) {
@@ -227,16 +227,20 @@ stay. Review with --dry-run first.`,
 }
 
 func toggleCmd(enable bool) *cobra.Command {
-	use, short := "disable", "Disable skills, servers and packs in a scope"
+	var save bool
+	use, short := "disable", "Disable skills, servers, packs and sources in a scope"
 	if enable {
-		use, short = "enable", "Enable skills, servers and packs in a scope"
+		use, short = "enable", "Enable skills, servers, packs and sources in a scope"
 	}
-	cmd := &cobra.Command{Use: use + " <skill|mcp:server|@pack>...", Short: short, Args: cobra.MinimumNArgs(1),
+	cmd := &cobra.Command{Use: use + " <skill|mcp:server|@pack|skills:source>...", Short: short, Args: cobra.MinimumNArgs(1),
 		Long: short + `.
 
-Only links and the agents' MCP entries change; no config file is written.
-What a config file declares under "enabled" comes back with the next sync.`}
+Only links and the agents' MCP entries change. With --save, the "enabled"
+flag of the named entries in the scope's config file changes too, so the
+next sync keeps the result; without it, what the file switches on comes
+back with the next sync.`}
 	scope := scopeFlags(cmd)
+	cmd.Flags().BoolVarP(&save, "save", "s", false, "also write the flag into the scope's config file")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		a, err := open()
 		if err != nil {
@@ -246,7 +250,7 @@ What a config file declares under "enabled" comes back with the next sync.`}
 		if err != nil {
 			return err
 		}
-		report, err := a.Toggle(s, enable, args...)
+		report, err := a.Toggle(s, enable, save, args...)
 		printSync(report)
 		if err == nil && len(report.Actions)+len(report.MCP)+len(report.Missing)+len(report.MissingSecrets) == 0 {
 			fmt.Println("nothing to change in", tilde(s.String()))
@@ -260,19 +264,19 @@ func syncCmd() *cobra.Command {
 	var dryRun, remove bool
 	cmd := &cobra.Command{
 		Use:   "sync",
-		Short: "Enable what the config files declare and repair the links (global and the project)",
-		Long: `Enable what the config files declare and repair the links.
+		Short: "Enable what the config files switch on and repair the links (global and the project)",
+		Long: `Enable what the config files switch on and repair the links.
 
-"enabled" in config.toml is the global scope, "enabled" in the project's
-.skillet.toml the project. Sources without a clone are cloned, every agent
-directory gets the same links, and a link follows a skill that moved inside
-its source. What is enabled without being declared stays and is reported as
-"extra"; --remove disables it.`,
+Every entry of config.toml is on unless its "enabled" flag is false; the
+project's .skillet.toml switches on its own entries. Sources without a clone
+are cloned, every agent directory gets the same links, and a link follows a
+skill that moved inside its source. What is enabled although its config
+file switches it off stays and is reported as "extra"; --remove disables it.`,
 		Args: cobra.NoArgs,
 	}
 	scope := scopeFlags(cmd)
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "only print what would change")
-	cmd.Flags().BoolVar(&remove, "remove", false, "disable what is enabled without being declared")
+	cmd.Flags().BoolVar(&remove, "remove", false, "disable what the config file switches off")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		a, err := open()
 		if err != nil {
@@ -447,7 +451,7 @@ func updateCmd() *cobra.Command {
 
 func runCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "run [skill|@pack]... -- <command> [args...]",
+		Use:   "run [skill|mcp:server|@pack|skills:source]... -- <command> [args...]",
 		Short: "Enable skills in the project for as long as a command runs",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -503,7 +507,7 @@ func sourcesCmd() *cobra.Command {
 				if commit == "" {
 					commit = "not cloned"
 				}
-				fmt.Printf("%-40s %-24s %-10s %3d skills\n", src.Name, ref, commit, src.Skills)
+				fmt.Printf("%-24s %-24s %-10s %3d skills\n", src.Name, ref, commit, src.Skills)
 			}
 			return nil
 		},

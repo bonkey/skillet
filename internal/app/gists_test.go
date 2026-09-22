@@ -53,9 +53,9 @@ func manifest(source, url, skill string, includes ...string) string {
 	for i, id := range includes {
 		quoted[i] = strconv.Quote(id)
 	}
-	return fmt.Sprintf("includes = [%s]\n\n[sources.%q]\nurl = %q\nskills = [%q]\n\n"+
-		"[packs.pack-%s]\ndescription = \"Pack of %s\"\nskills = [%q]\n\n[enabled]\npacks = [\"pack-%s\"]\n",
-		strings.Join(quoted, ", "), source, url, skill, skill, skill, skill, skill)
+	return fmt.Sprintf("includes = [%s]\n\n[[skills]]\nname = %q\nurl = %q\nonly = [%q]\n\n"+
+		"[packs.pack-%s]\ndescription = \"Pack of %s\"\nskills = [%q]\n",
+		strings.Join(quoted, ", "), source, url, skill, skill, skill, skill)
 }
 
 func TestARefInTheConfigPinsASource(t *testing.T) {
@@ -75,7 +75,7 @@ func TestARefInTheConfigPinsASource(t *testing.T) {
 		t.Fatalf("before pinning: %q", description())
 	}
 
-	e.open(t, strings.Replace(read(t, e.p.ConfigFile()), "skills = ['alpha', 'beta']", "ref = 'v1'\nskills = ['alpha', 'beta']", 1))
+	e.open(t, strings.Replace(read(t, e.p.ConfigFile()), "only = ['alpha', 'beta']", "ref = 'v1'\nonly = ['alpha', 'beta']", 1))
 	if _, err := e.app.Update(false); err != nil || description() != "The alpha skill" {
 		t.Fatalf("pinned to v1: %q %v", description(), err)
 	}
@@ -102,8 +102,8 @@ func TestPushAndPull(t *testing.T) {
 	if !strings.Contains(gists.files[id], id) || !strings.Contains(gists.files[id], "alpha") {
 		t.Fatalf("pushed content:\n%s", gists.files[id])
 	}
-	e.app.Toggle(e.app.Global(), false, "beta")
-	if _, created, err = e.app.Push(false, false); err != nil || created || !strings.HasSuffix(gists.files[id], "[enabled]\npacks = ['acme']\n") {
+	e.app.Toggle(e.app.Global(), false, false, "beta")
+	if _, created, err = e.app.Push(false, false); err != nil || created || !strings.Contains(gists.files[id], "[[skills]]\nurl = ") {
 		t.Fatalf("second push: %v %v\n%s", created, err, gists.files[id])
 	}
 
@@ -138,8 +138,8 @@ func TestPushAndPull(t *testing.T) {
 func TestIncludesMergeOnceAndSurviveCycles(t *testing.T) {
 	e := setup(t)
 	gists := &fakeGists{files: map[string]string{
-		gistA: manifest("acme/skills", e.origin, "alpha", gistB),
-		gistB: manifest("acme/second", e.origin, "beta", gistA, gistL, gistB),
+		gistA: manifest("first", e.origin, "alpha", gistB),
+		gistB: manifest("second", e.origin, "beta", gistA, gistL, gistB),
 	}}
 	e.app.Gists = gists
 	e.app.Local.Gist = gistL
@@ -170,7 +170,7 @@ func TestIncludesMergeOnceAndSurviveCycles(t *testing.T) {
 	}
 
 	// An included skill can be switched off until the next sync.
-	if _, err := e.app.Toggle(e.app.Global(), false, "alpha"); err != nil {
+	if _, err := e.app.Toggle(e.app.Global(), false, false, "alpha"); err != nil {
 		t.Fatal(err)
 	}
 	if isLink(filepath.Join(global, "alpha")) {
@@ -194,7 +194,7 @@ func TestIncludesMergeOnceAndSurviveCycles(t *testing.T) {
 	if len(e.app.Included) != 0 || e.app.Catalog.HasSkill("alpha") || isLink(filepath.Join(global, "beta")) {
 		t.Errorf("after exclude: %+v", e.app.Included)
 	}
-	if _, err := os.Stat(e.p.RepoDir("acme/second")); !os.IsNotExist(err) {
+	if _, err := os.Stat(e.p.RepoDir("second")); !os.IsNotExist(err) {
 		t.Error("a clone only the excluded gist needed should be deleted")
 	}
 	if _, err := e.app.Include(gistL); err == nil {

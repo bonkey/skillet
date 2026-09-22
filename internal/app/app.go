@@ -60,7 +60,7 @@ func OpenWith(p paths.Paths, client gist.Client) (*App, error) {
 		manifest := filepath.Join(root, paths.ManifestName)
 		if _, err := os.Stat(manifest); err == nil {
 			if a.Project, err = catalog.Load(manifest); err != nil {
-				return nil, fmt.Errorf("%w\nA project file is a catalog like config.toml: what the project enables goes under [enabled]", err)
+				return nil, fmt.Errorf("%w\nA project file is a catalog like config.toml", err)
 			}
 		}
 	}
@@ -136,14 +136,17 @@ func (a *App) sessionsDir(scope Scope) string {
 	return a.Paths.SessionsDir()
 }
 
-// Declared is what a scope's config file enables: `enabled` in the catalog
-// file for the global scope, and in the manifest for a project.
+// Declared is what the flags of a scope's config file switch on: the
+// entries of the catalog file and the included gists for the global scope,
+// the manifest's own entries for a project.
 func (a *App) Declared(scope Scope) catalog.Set {
 	switch {
 	case !scope.Project:
-		return a.Catalog.Enabled
+		return a.Catalog.Declared(func(origin string) bool { return origin != paths.ManifestName })
 	case a.Project != nil:
-		return a.Project.Enabled
+		set := a.Catalog.Declared(func(origin string) bool { return origin == paths.ManifestName })
+		set.MCPs = nil
+		return set
 	}
 	return catalog.Set{}
 }
@@ -477,14 +480,20 @@ func expandMCP(def catalog.MCP, expandText func(string) (string, []string)) (cat
 	return def, missing
 }
 
-// Toggle enables or disables skills, servers ("mcp:name") and packs
-// ("@name") in a scope. Servers exist in the global scope only.
-func (a *App) Toggle(scope Scope, enable bool, names ...string) (SyncReport, error) {
+// Toggle enables or disables skills, servers ("mcp:name"), packs ("@name")
+// and sources ("skills:name") in a scope. Servers exist in the global scope
+// only. With save, the entries' flags in the scope's config file change too.
+func (a *App) Toggle(scope Scope, enable, save bool, names ...string) (SyncReport, error) {
 	if scope.Project {
 		for _, name := range names {
 			if strings.HasPrefix(name, catalog.MCPPrefix) {
 				return SyncReport{}, fmt.Errorf("%s: MCP servers are global; drop -p, or use `skillet run`", name)
 			}
+		}
+	}
+	if save {
+		if err := a.saveFlags(scope, enable, names); err != nil {
+			return SyncReport{}, err
 		}
 	}
 	set, err := a.Set(scope)
@@ -517,11 +526,143 @@ func (a *App) Toggle(scope Scope, enable bool, names ...string) (SyncReport, err
 			}
 		}
 		if len(back) > 0 {
-			report.Notes = append(report.Notes, fmt.Sprintf("%s: enabled in %s, so `skillet sync` enables them again",
+			report.Notes = append(report.Notes, fmt.Sprintf("%s: on in %s, so `skillet sync` enables them again; `disable --save` switches them off there",
 				strings.Join(back, ", "), a.configOf(scope)))
 		}
 	}
 	return report, err
+}
+
+// saveFlags switches the named entries on or off in the scope's config
+// file. The entries must be the file's own: globally those of config.toml,
+// in a project those of its manifest. Switching on an entry that stays off
+// through its source or its packs is refused, with the command that works.
+func (a *App) saveFlags(scope Scope, on bool, names []string) error {
+	if err := a.Catalog.Check(names); err != nil {
+		return err
+	}
+	target, file, own := a.Local, a.Paths.ConfigFile(), ""
+	if scope.Project {
+		if a.Project == nil {
+			return fmt.Errorf("%s has no %s to save to", scope.Root, paths.ManifestName)
+		}
+		target, file, own = a.Project, a.configOf(scope), paths.ManifestName
+	}
+	for _, name := range names {
+		if origin := a.originOf(name); origin != own {
+			switch {
+			case origin != "" && origin != paths.ManifestName:
+				return fmt.Errorf("%s comes from gist %s; its flag lives in that catalog", name, origin)
+			case scope.Project:
+				return fmt.Errorf("%s is not defined in %s; a project flags only its own entries", name, file)
+			default:
+				return fmt.Errorf("%s is defined in the project's %s; use -p", name, paths.ManifestName)
+			}
+		}
+	}
+	trial, err := copyOf(target)
+	if err != nil {
+		return err
+	}
+	if err := a.setFlags(trial, on, names); err != nil {
+		return err
+	}
+	if on {
+		for _, name := range names {
+			if err := a.staysOff(trial, name); err != nil {
+				return err
+			}
+		}
+	}
+	if err := a.setFlags(target, on, names); err != nil {
+		return err
+	}
+	if !scope.Project {
+		return a.Save()
+	}
+	if err := target.Save(file); err != nil {
+		return err
+	}
+	return a.merge()
+}
+
+// originOf names where an entry comes from: "" for the catalog file, the
+// manifest's name, or a gist id.
+func (a *App) originOf(name string) string {
+	switch {
+	case strings.HasPrefix(name, catalog.PackPrefix):
+		return a.Catalog.PackOrigin[strings.TrimPrefix(name, catalog.PackPrefix)]
+	case strings.HasPrefix(name, catalog.MCPPrefix):
+		return a.Catalog.MCPOrigin[strings.TrimPrefix(name, catalog.MCPPrefix)]
+	case catalog.IsSource(name):
+		return a.Catalog.SourceOrigin[strings.TrimPrefix(name, catalog.SourcePrefix)]
+	}
+	skill, _ := catalog.SplitRef(name)
+	source, _ := a.Catalog.SourceOf(skill)
+	return a.Catalog.SourceOrigin[source]
+}
+
+// setFlags applies the flags to a catalog; a skill's source is looked up in
+// the merged catalog, which knows the skills of sources that take all.
+func (a *App) setFlags(c *catalog.Catalog, on bool, names []string) error {
+	for _, name := range names {
+		if strings.HasPrefix(name, catalog.PackPrefix) || strings.HasPrefix(name, catalog.MCPPrefix) || catalog.IsSource(name) {
+			if err := c.SetFlag(name, on); err != nil {
+				return err
+			}
+			continue
+		}
+		skill, _ := catalog.SplitRef(name)
+		source, _ := a.Catalog.SourceOf(skill)
+		if err := c.SetSkillFlag(source, skill, on); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// staysOff explains why a skill or server switched on in c is still off:
+// its source, or every pack of c that holds it, is switched off.
+func (a *App) staysOff(c *catalog.Catalog, name string) error {
+	var item string
+	var holds func(pack string) []string
+	switch {
+	case strings.HasPrefix(name, catalog.PackPrefix), catalog.IsSource(name):
+		return nil
+	case strings.HasPrefix(name, catalog.MCPPrefix):
+		item = strings.TrimPrefix(name, catalog.MCPPrefix)
+		holds = func(pack string) []string { return c.Packs[pack].MCPs }
+	default:
+		item, _ = catalog.SplitRef(name)
+		source, _ := a.Catalog.SourceOf(item)
+		if src, ok := c.Sources[source]; ok && !src.On() {
+			return fmt.Errorf("%s stays off: its source %s is switched off; `skillet enable --save %s%s` switches it on",
+				item, source, catalog.SourcePrefix, source)
+		}
+		holds = func(pack string) []string { return a.Catalog.PackSkills(pack) }
+	}
+	var packs []string
+	on := false
+	for _, pack := range c.PackNames() {
+		if slices.Contains(holds(pack), item) {
+			packs = append(packs, pack)
+			on = on || c.Packs[pack].On()
+		}
+	}
+	if len(packs) > 0 && !on {
+		return fmt.Errorf("%s stays off: every pack that holds it is switched off (%s); `skillet enable --save @%s` switches one on",
+			item, strings.Join(packs, ", "), packs[0])
+	}
+	return nil
+}
+
+// copyOf clones a catalog through its file form.
+func copyOf(c *catalog.Catalog) (*catalog.Catalog, error) {
+	data, err := c.Encode()
+	if err != nil {
+		return nil, err
+	}
+	return catalog.Parse(data)
 }
 
 // configOf names the file that declares what a scope enables.
@@ -536,7 +677,6 @@ func (a *App) configOf(scope Scope) string {
 func (a *App) DropUnusedClone(name string) {
 	if _, ok := a.Catalog.Sources[name]; !ok {
 		os.RemoveAll(a.Paths.RepoDir(name))
-		os.Remove(filepath.Dir(a.Paths.RepoDir(name))) // the owner folder; Remove only deletes an empty one
 	}
 }
 

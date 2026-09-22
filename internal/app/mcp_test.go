@@ -32,11 +32,13 @@ func withServers(t *testing.T, e *env) {
 	t.Helper()
 	e.add(t, false)
 	e.app.Local.Agents = []string{"claude-code", "codex"}
-	e.app.Local.MCPs["simctl"] = &catalog.MCP{Type: "local", Command: []string{"npx", "-y", "simctl-mcp"}}
+	e.app.Local.MCPs["simctl"] = &catalog.MCP{Name: "simctl", Type: "local", Command: []string{"npx", "-y", "simctl-mcp"}}
 	e.app.Local.MCPs["tavily"] = &catalog.MCP{Type: "remote", URL: "https://mcp.tavily.com/mcp?tavilyApiKey=${TAVILY_API_KEY}"}
 	if err := e.app.Local.CreatePack("ios", "Building for iOS", []string{"alpha", "mcp:simctl", "mcp:tavily"}); err != nil {
 		t.Fatal(err)
 	}
+	off := false
+	e.app.Local.Packs["ios"].Enabled = &off // the tests switch it on themselves
 	if err := e.app.Save(); err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +50,7 @@ func TestEnablingAPackWritesItsServers(t *testing.T) {
 	claude, codex := filepath.Join(e.p.Home, ".claude.json"), filepath.Join(e.p.Home, ".codex", "config.toml")
 	write(t, claude, "{\n  \"numStartups\": 3\n}\n")
 
-	report, err := e.app.Toggle(e.app.Global(), true, "@ios")
+	report, err := e.app.Toggle(e.app.Global(), true, false, "@ios")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +66,7 @@ func TestEnablingAPackWritesItsServers(t *testing.T) {
 
 	// A server that was left alone is not enabled; enabling again writes it.
 	writeSecrets(t, e, "TAVILY_API_KEY = \"tvly-secret\"\n")
-	if _, err := e.app.Toggle(e.app.Global(), true, "@ios"); err != nil {
+	if _, err := e.app.Toggle(e.app.Global(), true, false, "@ios"); err != nil {
 		t.Fatal(err)
 	}
 	if text := read(t, codex); !strings.Contains(text, `url = "https://mcp.tavily.com/mcp?tavilyApiKey=tvly-secret"`) {
@@ -78,7 +80,7 @@ func TestEnablingAPackWritesItsServers(t *testing.T) {
 		t.Errorf("view: %+v", got)
 	}
 
-	if _, err := e.app.Toggle(e.app.Global(), false, "mcp:tavily"); err != nil {
+	if _, err := e.app.Toggle(e.app.Global(), false, false, "mcp:tavily"); err != nil {
 		t.Fatal(err)
 	}
 	if text := read(t, claude); strings.Contains(text, "tavily") || !strings.Contains(text, "simctl") {
@@ -87,7 +89,7 @@ func TestEnablingAPackWritesItsServers(t *testing.T) {
 	if view, _ := e.app.View(); view.MCPs["tavily"].Global || !view.MCPs["simctl"].Global {
 		t.Errorf("the agents' configs are the state: %+v", view.MCPs)
 	}
-	if _, err := e.app.Toggle(e.app.Global(), false, "@ios"); err != nil {
+	if _, err := e.app.Toggle(e.app.Global(), false, false, "@ios"); err != nil {
 		t.Fatal(err)
 	}
 	if text := read(t, claude); text != "{\n  \"numStartups\": 3,\n  \"mcpServers\": {\n  }\n}\n" && strings.Contains(text, "simctl") {
@@ -99,10 +101,10 @@ func TestServersAreGlobalOnly(t *testing.T) {
 	e := setup(t)
 	withServers(t, &e)
 	scope, _ := e.app.ProjectScope()
-	if _, err := e.app.Toggle(scope, true, "mcp:simctl"); err == nil {
+	if _, err := e.app.Toggle(scope, true, false, "mcp:simctl"); err == nil {
 		t.Error("a server cannot be enabled in a project")
 	}
-	report, err := e.app.Toggle(scope, true, "@ios")
+	report, err := e.app.Toggle(scope, true, false, "@ios")
 	if err != nil || len(report.Notes) != 1 || !strings.Contains(report.Notes[0], "simctl") {
 		t.Fatalf("a pack's servers are skipped with a note: %+v %v", report.Notes, err)
 	}
@@ -162,7 +164,7 @@ func TestEnablingOverwritesAnEntryOfTheSameName(t *testing.T) {
 	claude := filepath.Join(e.p.Home, ".claude.json")
 	write(t, claude, `{"mcpServers": {"simctl": {"type": "http", "url": "https://old"}, "mine": {"url": "https://mine"}}}`)
 
-	if _, err := e.app.Toggle(e.app.Global(), true, "mcp:simctl"); err != nil {
+	if _, err := e.app.Toggle(e.app.Global(), true, false, "mcp:simctl"); err != nil {
 		t.Fatal(err)
 	}
 	if text := read(t, claude); !strings.Contains(text, "simctl-mcp") || strings.Contains(text, "https://old") || !strings.Contains(text, "https://mine") {
@@ -193,10 +195,10 @@ func TestSecretsComeFromOnePasswordItemsOnlyWhenNeeded(t *testing.T) {
 	e.app.Save()
 	claude := filepath.Join(e.p.Home, ".claude.json")
 
-	if _, err := e.app.Toggle(e.app.Global(), true, "mcp:simctl"); err != nil || op.reads != 0 {
+	if _, err := e.app.Toggle(e.app.Global(), true, false, "mcp:simctl"); err != nil || op.reads != 0 {
 		t.Fatalf("a server without placeholders needs no item: %d reads, %v", op.reads, err)
 	}
-	report, err := e.app.Toggle(e.app.Global(), true, "mcp:tavily")
+	report, err := e.app.Toggle(e.app.Global(), true, false, "mcp:tavily")
 	if err != nil || len(report.MissingSecrets) != 0 || !strings.Contains(read(t, claude), "tavilyApiKey=from-1password") {
 		t.Fatalf("the field of the item fills the placeholder: %+v %v", report, err)
 	}
@@ -234,7 +236,7 @@ func TestAnUnreadableItemLeavesServersAlone(t *testing.T) {
 	e.app.Local.Secrets = []catalog.SecretItem{{Account: "me.1password.com", Vault: "v", Item: "locked"}}
 	e.app.Save()
 
-	report, err := e.app.Toggle(e.app.Global(), true, "@ios")
+	report, err := e.app.Toggle(e.app.Global(), true, false, "@ios")
 	if err != nil {
 		t.Fatalf("an item that cannot be read must not fail the sync: %v", err)
 	}

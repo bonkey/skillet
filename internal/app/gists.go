@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/pelletier/go-toml/v2"
-
 	"github.com/bonkey/skillet/internal/catalog"
 	"github.com/bonkey/skillet/internal/gist"
 	"github.com/bonkey/skillet/internal/paths"
@@ -73,10 +71,7 @@ func (a *App) merge() error {
 		ids[i], catalogs[i] = inc.ID, inc.Catalog
 	}
 	if a.Project != nil {
-		// The manifest enables for its project only.
-		project := *a.Project
-		project.Enabled = catalog.Set{}
-		ids, catalogs = append(ids, paths.ManifestName), append(catalogs, &project)
+		ids, catalogs = append(ids, paths.ManifestName), append(catalogs, a.Project)
 	}
 	merged, err := catalog.Merge(a.Local, ids, catalogs)
 	a.Catalog = merged
@@ -113,9 +108,7 @@ func (a *App) readGist(id string, refresh bool) (*catalog.Catalog, error) {
 }
 
 func parse(content string) (*catalog.Catalog, error) {
-	c := catalog.New()
-	err := toml.Unmarshal([]byte(content), c)
-	return c, err
+	return catalog.Parse([]byte(content))
 }
 
 // Push uploads the local catalog to its gist. Without one, or when fresh is

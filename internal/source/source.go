@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/bonkey/skillet/internal/catalog"
 	"gopkg.in/yaml.v3"
 )
 
@@ -23,18 +24,17 @@ type Skill struct {
 
 var (
 	shorthand = regexp.MustCompile(`^[\w.-]+/[\w.-]+$`)
-	urlTail   = regexp.MustCompile(`([\w.-]+)/([\w.-]+?)(\.git)?/?$`)
 	validName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 )
 
-// ParseName turns "owner/repo" or a git URL into a source name and clone URL.
+// ParseName turns "owner/repo" or a git URL into "owner/repo" and a clone URL.
 func ParseName(arg string) (name, url string, err error) {
 	if shorthand.MatchString(arg) {
 		return arg, "https://github.com/" + arg + ".git", nil
 	}
 	if strings.Contains(arg, ":") || filepath.IsAbs(arg) {
-		if m := urlTail.FindStringSubmatch(strings.ReplaceAll(arg, ":", "/")); m != nil {
-			return m[1] + "/" + m[2], arg, nil
+		if owner, repo, ok := catalog.RepoParts(arg); ok {
+			return owner + "/" + repo, arg, nil
 		}
 	}
 	return "", "", fmt.Errorf("%q is neither owner/repo nor a git URL", arg)

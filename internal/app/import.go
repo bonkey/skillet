@@ -7,6 +7,7 @@ import (
 	"slices"
 	"sort"
 
+	"github.com/bonkey/skillet/internal/catalog"
 	"github.com/bonkey/skillet/internal/importer"
 	"github.com/bonkey/skillet/internal/source"
 )
@@ -48,10 +49,22 @@ func (a *App) Import(lockFile string, dryRun bool) (ImportReport, error) {
 	}
 	sort.Strings(sources)
 
+	// The clones go where the sources will live once they are all in the
+	// catalog; a new repository name can rename an existing source too.
+	before := a.SourceNames()
+	entriesToName := make([]*catalog.Source, len(sources))
+	for i, name := range sources {
+		first := bySource[name][0]
+		entriesToName[i] = &catalog.Source{URL: first.URL, Ref: first.Ref}
+	}
+	names, err := a.Local.NamesFor(entriesToName)
+	if err != nil {
+		return report, err
+	}
 	failed := make([]error, len(sources))
 	parallel(len(sources), func(i int) {
 		first := bySource[sources[i]][0]
-		_, failed[i] = fetchLatest(first.URL, first.Ref, a.Paths.RepoDir(first.Source), false)
+		_, failed[i] = fetchLatest(first.URL, first.Ref, a.Paths.RepoDir(names[i]), false)
 	})
 
 	for i, name := range sources {
@@ -62,7 +75,7 @@ func (a *App) Import(lockFile string, dryRun bool) (ImportReport, error) {
 			}
 			continue
 		}
-		found, err := source.Discover(a.Paths.RepoDir(name))
+		found, err := source.Discover(a.Paths.RepoDir(names[i]))
 		if err != nil {
 			return report, err
 		}
@@ -80,7 +93,7 @@ func (a *App) Import(lockFile string, dryRun bool) (ImportReport, error) {
 				report.Skipped[entry.Name] = fmt.Sprintf("no skill at %s in %s", entry.Path, name)
 				continue
 			}
-			if err := a.Local.AddSkills(name, entry.URL, entry.Ref, []string{skill}); err != nil {
+			if _, err := a.Local.AddSkills(entry.URL, entry.Ref, []string{skill}); err != nil {
 				report.Skipped[entry.Name] = err.Error()
 				continue
 			}
@@ -101,9 +114,6 @@ func (a *App) Import(lockFile string, dryRun bool) (ImportReport, error) {
 		if err := a.Local.PackAdd(pack, added); err != nil {
 			return report, err
 		}
-		if err := a.Local.Enable(&a.Local.Enabled, "@"+pack); err != nil {
-			return report, err
-		}
 		report.Imported = append(report.Imported, added...)
 	}
 	sort.Strings(report.Imported)
@@ -115,6 +125,13 @@ func (a *App) Import(lockFile string, dryRun bool) (ImportReport, error) {
 	}
 	if err != nil {
 		return report, err
+	}
+	if !dryRun {
+		// A source renamed by the import, or one whose skills were all
+		// skipped, leaves a clone under a name the catalog no longer holds.
+		for _, name := range append(before, names...) {
+			a.DropUnusedClone(name)
+		}
 	}
 	if err := a.Reindex(); err != nil {
 		return report, err

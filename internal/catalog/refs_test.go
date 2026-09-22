@@ -10,16 +10,16 @@ func TestSkillReferencesNameTheirSource(t *testing.T) {
 	var s Set
 
 	// Bare names are accepted and recorded with their source.
-	if err := c.Enable(&s, "pr", "a@acme/skills"); err != nil {
+	if err := c.Enable(&s, "pr", "a@skills"); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(s.Skills, []string{"a@acme/skills", "pr@me/own"}) {
+	if !reflect.DeepEqual(s.Skills, []string{"a@skills", "pr@own"}) {
 		t.Fatalf("recorded references: %v", s.Skills)
 	}
 	if got := c.Resolve(s); !reflect.DeepEqual(got, []string{"a", "pr"}) {
 		t.Fatalf("resolved: %v", got)
 	}
-	if err := c.Enable(&s, "pr@acme/skills"); err == nil {
+	if err := c.Enable(&s, "pr@skills"); err == nil {
 		t.Error("a reference to the wrong source should be rejected")
 	}
 
@@ -29,23 +29,19 @@ func TestSkillReferencesNameTheirSource(t *testing.T) {
 		t.Errorf("a reference to another source must not resolve: %v", got)
 	}
 
-	// Disabling works on either spelling, and exceptions are recorded with the source.
-	c.Enable(&s, "@acme")
-	if err := c.Disable(&s, "b"); err != nil || !reflect.DeepEqual(s.Except, []string{"b@acme/skills"}) {
-		t.Fatalf("except: %v %v", s.Except, err)
-	}
-	if err := c.Disable(&s, "pr@me/own"); err != nil || len(s.Skills) != 1 {
+	// Disabling and enabling work on either spelling.
+	if err := c.Disable(&s, "pr@own"); err != nil || !reflect.DeepEqual(s.Skills, []string{"a@skills"}) {
 		t.Fatalf("after disabling pr: %v %v", s.Skills, err)
 	}
-	if err := c.Enable(&s, "b@acme/skills"); err != nil || len(s.Except) != 0 {
-		t.Fatalf("re-enable by reference: %v %v", s.Except, err)
+	if err := c.Enable(&s, "b@skills"); err != nil || !reflect.DeepEqual(s.Skills, []string{"a@skills", "b@skills"}) {
+		t.Fatalf("enable by reference: %v %v", s.Skills, err)
 	}
 
 	// Packs record references too, and find their members by either spelling.
 	if err := c.PackAdd("acme", []string{"c"}); err != nil {
 		t.Fatal(err)
 	}
-	if got := c.Packs["acme"].Skills; !reflect.DeepEqual(got, []string{"a", "b", "c@acme/skills"}) {
+	if got := c.Packs["acme"].Skills; !reflect.DeepEqual(got, []string{"a", "b", "c@skills"}) {
 		t.Errorf("pack entries: %v", got)
 	}
 	if got := c.PackSkills("acme"); !reflect.DeepEqual(got, []string{"a", "b", "c"}) {

@@ -4,12 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
-	"strings"
 )
-
-// MCPPrefix marks an MCP server where skills and servers share a list, as in
-// command arguments and in Set.Except.
-const MCPPrefix = "mcp:"
 
 // SecretItem names a 1Password item.
 type SecretItem struct {
@@ -21,28 +16,36 @@ type SecretItem struct {
 // MCP defines one MCP server. String fields may hold ${NAME} placeholders
 // for secrets.
 type MCP struct {
-	Type          string            `toml:"type"` // "local" or "remote"
+	// Name is the explicit name of the server. Without one, the server is
+	// named after its command or URL.
+	Name          string            `toml:"name,omitempty"`
 	Command       []string          `toml:"command,omitempty"`
 	URL           string            `toml:"url,omitempty"`
 	Transport     string            `toml:"transport,omitempty"` // "http" (default) or "sse", for remote servers
-	Environment   map[string]string `toml:"environment,omitempty"`
-	Headers       map[string]string `toml:"headers,omitempty"`
+	Environment   map[string]string `toml:"environment,omitempty,inline"`
+	Headers       map[string]string `toml:"headers,omitempty,inline"`
 	Timeout       float64           `toml:"timeout,omitempty"` // seconds
 	DisabledTools []string          `toml:"disabled_tools,omitempty"`
+	// Enabled switches the server off when false.
+	Enabled *bool `toml:"enabled,omitempty"`
+	// Type is "local" for a server with a command and "remote" for one
+	// with a URL. Validate sets it.
+	Type string `toml:"-"`
 }
 
+// Validate checks the definition and sets its Type.
 func (m *MCP) Validate(name string) error {
 	switch {
-	case m.Type == "local" && len(m.Command) == 0:
-		return fmt.Errorf("mcp %q: a local server needs a command", name)
-	case m.Type == "local" && m.URL != "":
-		return fmt.Errorf("mcp %q: a local server has no url", name)
-	case m.Type == "remote" && m.URL == "":
-		return fmt.Errorf("mcp %q: a remote server needs a url", name)
-	case m.Type != "local" && m.Type != "remote":
-		return fmt.Errorf("mcp %q: type must be local or remote", name)
+	case len(m.Command) > 0 && m.URL != "":
+		return fmt.Errorf("mcp %q: a server has a command or a url, not both", name)
+	case len(m.Command) == 0 && m.URL == "":
+		return fmt.Errorf("mcp %q: a server needs a command or a url", name)
 	case m.Transport != "" && m.Transport != "http" && m.Transport != "sse":
 		return fmt.Errorf("mcp %q: transport must be http or sse", name)
+	}
+	m.Type = "remote"
+	if len(m.Command) > 0 {
+		m.Type = "local"
 	}
 	return nil
 }
@@ -81,14 +84,6 @@ func (c *Catalog) ResolveMCPs(s Set) []string {
 	for _, server := range s.MCPs {
 		on[server] = true
 	}
-	for _, server := range s.InheritedMCPs {
-		on[server] = true
-	}
-	for _, entry := range s.Except {
-		if server, ok := strings.CutPrefix(entry, MCPPrefix); ok {
-			delete(on, server)
-		}
-	}
 	var out []string
 	for server := range on {
 		if _, ok := c.MCPs[server]; ok {
@@ -97,19 +92,4 @@ func (c *Catalog) ResolveMCPs(s Set) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-func (c *Catalog) enableMCP(s *Set, server string) {
-	s.Except = remove(s.Except, MCPPrefix+server)
-	if !slices.Contains(c.ResolveMCPs(*s), server) {
-		s.MCPs = add(s.MCPs, server)
-	}
-}
-
-func (c *Catalog) disableMCP(s *Set, server string) {
-	s.MCPs = remove(s.MCPs, server)
-	s.Except = remove(s.Except, MCPPrefix+server)
-	if slices.Contains(c.ResolveMCPs(*s), server) {
-		s.Except = add(s.Except, MCPPrefix+server)
-	}
 }

@@ -3,16 +3,13 @@
 #
 #   mkdir -p ~/.config/skillet
 #   cp examples/config.toml ~/.config/skillet/config.toml
-#   skillet sync          # clones the sources and links what is enabled
+#   skillet sync          # clones the source and links the skill
 agents = ["claude-code"]
-
-[sources."bonkey/skillet"]
-url = "https://github.com/bonkey/skillet.git"
-skills = ["skillet"]
 
 [packs.skillet]
 description = "Lets agents search the catalog and enable or disable skills with skillet"
 skills = ["skillet"]
 
-[enabled]
-packs = ["skillet"]
+[[skills]]
+url = "https://github.com/bonkey/skillet.git"
+only = ["skillet"]

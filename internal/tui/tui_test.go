@@ -25,7 +25,7 @@ func model(t *testing.T) *Model {
 		Cwd:    filepath.Join(root, "project"),
 	}
 	os.MkdirAll(p.Cwd, 0o755)
-	clone := p.RepoDir("acme/skills")
+	clone := p.RepoDir("skills")
 	for _, name := range []string{"alpha", "beta", "loose"} {
 		os.MkdirAll(filepath.Join(clone, name), 0o755)
 		os.WriteFile(filepath.Join(clone, name, "SKILL.md"), []byte("---\nname: "+name+"\ndescription: The "+name+" skill\n---\n"), 0o644)
@@ -36,8 +36,8 @@ func model(t *testing.T) *Model {
 		}
 	}
 	c := catalog.New()
-	c.Sources["acme/skills"] = &catalog.Source{URL: "x", Skills: []string{"alpha", "beta", "loose"}}
-	c.MCPs["simctl"] = &catalog.MCP{Type: "local", Command: []string{"npx", "-y", "simctl-mcp"}}
+	c.Sources["skills"] = &catalog.Source{URL: "https://github.com/acme/skills.git", Skills: []string{"alpha", "beta", "loose"}}
+	c.MCPs["simctl"] = &catalog.MCP{Name: "simctl", Type: "local", Command: []string{"npx", "-y", "simctl-mcp"}}
 	c.Packs["acme"] = &catalog.Pack{Description: "Acme skills", Skills: []string{"alpha", "beta"}, MCPs: []string{"simctl"}}
 	if err := c.Save(p.ConfigFile()); err != nil {
 		t.Fatal(err)

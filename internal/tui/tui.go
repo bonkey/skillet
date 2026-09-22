@@ -380,7 +380,7 @@ func (m *Model) apply() tea.Cmd {
 			if len(names) == 0 {
 				continue
 			}
-			report, err := m.app.Toggle(scope, i == 0, names...)
+			report, err := m.app.Toggle(scope, i == 0, false, names...)
 			if summary := syncSummary(report); summary != "" {
 				notes = append(notes, summary)
 			}
