@@ -221,42 +221,27 @@ func shortAgent(name string) string {
 	return strings.TrimPrefix(name, "github-")
 }
 
-// printTable prints one row per skill, named by its folder inside the
-// clones, and per server, with one column per configured agent.
+// printTable prints two tables: one row per skill, named by its folder
+// inside the clones, with a column per agent that has a skills directory,
+// and one row per server with a column per agent that has an MCP config.
 func printTable(a *app.App, report app.SyncReport) {
-	type column struct{ name, dir, file string }
-	var columns []column
+	repos := a.Paths.ReposDir() + string(filepath.Separator)
+	var dirs, files []column
 	for _, name := range a.Catalog.Agents {
-		col := column{name: name}
 		if agent, ok := link.Agents[name]; ok {
 			rel := agent.Global
 			if report.Scope.Project {
 				rel = agent.Project
 			}
 			if rel != "" {
-				col.dir = filepath.Join(report.Scope.Root, filepath.FromSlash(rel))
+				dirs = append(dirs, column{name, filepath.Join(report.Scope.Root, filepath.FromSlash(rel))})
 			}
 		}
 		if target, ok := mcp.Targets[name]; ok && !report.Scope.Project {
-			col.file = filepath.Join(a.Paths.Home, filepath.FromSlash(target.File))
-		}
-		columns = append(columns, col)
-	}
-	if len(columns) == 0 {
-		return
-	}
-	repos := a.Paths.ReposDir() + string(filepath.Separator)
-	rows := map[string]map[string]mark{}
-	place := func(label string, cell mark, hit func(column) bool) {
-		if rows[label] == nil {
-			rows[label] = map[string]mark{}
-		}
-		for _, col := range columns {
-			if hit(col) && cell > rows[label][col.name] {
-				rows[label][col.name] = cell
-			}
+			files = append(files, column{name, filepath.Join(a.Paths.Home, filepath.FromSlash(target.File))})
 		}
 	}
+	skills, servers := map[string]map[string]mark{}, map[string]map[string]mark{}
 	for _, action := range slices.Concat(report.Actions, report.Kept) {
 		label := action.Name
 		if action.Target != "" {
@@ -264,39 +249,53 @@ func printTable(a *app.App, report app.SyncReport) {
 		} else if found, ok := a.Index.Lookup(a.Catalog, action.Name); ok {
 			label = strings.TrimPrefix(found.Dir, repos)
 		}
-		place(label, markOf(action.Op), func(col column) bool { return col.dir == action.Dir })
+		place(skills, dirs, label, action.Dir, markOf(action.Op))
 	}
 	for _, action := range slices.Concat(report.MCP, report.KeptMCP) {
-		place(catalog.MCPPrefix+action.Name, markOf(action.Op), func(col column) bool { return col.file == action.File })
-	}
-	if len(rows) == 0 {
-		return
+		place(servers, files, action.Name, action.File, markOf(action.Op))
 	}
 	glyphs := asciiGlyphs
 	if term.IsTerminal(int(os.Stdout.Fd())) {
 		glyphs = nerdGlyphs
 	}
-	title := tilde(report.Scope.String())
-	width := len(title)
-	for label := range rows {
-		width = max(width, len(label))
-	}
-	fmt.Printf("%-*s", width, title)
-	for _, col := range columns {
-		fmt.Printf("  %s", shortAgent(col.name))
-	}
-	fmt.Println()
+	scope := tilde(report.Scope.String())
 	used := map[mark]bool{}
-	for _, label := range sortedKeys(rows) {
-		fmt.Printf("%-*s", width, label)
-		for _, col := range columns {
-			cell := rows[label][col.name]
-			used[cell] = true
-			name, span := shortAgent(col.name), lipgloss.Width(glyphs[cell])
-			pad := (len(name) - span) / 2
-			fmt.Printf("  %*s%s%*s", pad, "", glyphStyles[cell].Render(glyphs[cell]), len(name)-pad-span, "")
+	printed := false
+	for _, table := range []struct {
+		title   string
+		columns []column
+		rows    map[string]map[string]mark
+	}{{scope + " skills", dirs, skills}, {scope + " mcp", files, servers}} {
+		if len(table.rows) == 0 || len(table.columns) == 0 {
+			continue
+		}
+		if printed {
+			fmt.Println()
+		}
+		printed = true
+		width := len(table.title)
+		for label := range table.rows {
+			width = max(width, len(label))
+		}
+		fmt.Printf("%-*s", width, table.title)
+		for _, col := range table.columns {
+			fmt.Printf("  %s", shortAgent(col.name))
 		}
 		fmt.Println()
+		for _, label := range sortedKeys(table.rows) {
+			fmt.Printf("%-*s", width, label)
+			for _, col := range table.columns {
+				cell := table.rows[label][col.name]
+				used[cell] = true
+				name, span := shortAgent(col.name), lipgloss.Width(glyphs[cell])
+				pad := (len(name) - span) / 2
+				fmt.Printf("  %*s%s%*s", pad, "", glyphStyles[cell].Render(glyphs[cell]), len(name)-pad-span, "")
+			}
+			fmt.Println()
+		}
+	}
+	if !printed {
+		return
 	}
 	var legend []string
 	for cell := markNone; cell <= markConflict; cell++ {
@@ -305,6 +304,23 @@ func printTable(a *app.App, report app.SyncReport) {
 		}
 	}
 	fmt.Println(glyphStyles[markNone].Render(strings.Join(legend, "   ")))
+}
+
+// column is an agent in a sync table, with the directory or config file
+// that its cells describe.
+type column struct{ name, path string }
+
+// place records a cell in the row of label for the column whose path is
+// where; a stronger mark wins over a weaker one.
+func place(rows map[string]map[string]mark, columns []column, label, where string, cell mark) {
+	if rows[label] == nil {
+		rows[label] = map[string]mark{}
+	}
+	for _, col := range columns {
+		if col.path == where && cell > rows[label][col.name] {
+			rows[label][col.name] = cell
+		}
+	}
 }
 
 // printMembership prints, per pack, the skills and servers that a report

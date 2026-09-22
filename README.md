@@ -119,10 +119,9 @@ MCP configs; with `--save` they also flip the entry's `enabled` flag in the conf
 of a config file is on unless it says `enabled = false`: `sync` enables what is on, clones sources
 that have no clone yet, gives every agent directory the same links and lets a link follow a skill
 that moved inside its source. What is enabled although its config file switches it off stays, and
-`sync` reports it as `extra`; `sync --clean` disables it. Commands print a table with one row per
-skill, named by its folder inside the clones, and per server, and one column per agent: already
-right, added, repaired, removed, a conflict, or absent where the agent has no such directory or
-config. On a terminal the cells are Nerd Font symbols; piped, they are letters. `--verbose` prints
+`sync` reports it as `extra`; `sync --clean` disables it. Commands print two tables with one column per
+agent: one row per skill, named by its folder inside the clones, and one row per server. A cell is
+already right, added, repaired, removed, a conflict, or absent where the agent lacks the entry. On a terminal the cells are Nerd Font symbols; piped, they are letters. `--verbose` prints
 every link and server entry instead, also those that were already right, and then the enabled
 skills and servers grouped by pack, the change grouped the same way, and the packs with nothing
 on.
