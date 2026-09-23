@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"runtime/debug"
 	"slices"
 	"sort"
@@ -104,7 +103,7 @@ is a source, and a bare name or "name@source" is a skill.`,
 	cmd.PersistentFlags().StringSliceVar(&agents, "agents", nil,
 		"act on these agents instead of those in the catalog (comma separated)")
 	cmd.AddCommand(importCmd(), toggleCmd(true), toggleCmd(false),
-		syncCmd(), listCmd(), updateCmd(), runCmd(), sourcesCmd(), gistCmd(), mcpCmd())
+		syncCmd(), statusCmd(), listCmd(), updateCmd(), runCmd(), sourcesCmd(), gistCmd(), mcpCmd())
 	return cmd
 }
 
@@ -130,7 +129,7 @@ func tilde(text string) string {
 	return text
 }
 
-// printSync prints a table of the scope's skills and servers with one
+// printSync prints the skills and servers that changed, in a table with one
 // column per agent, or with --verbose every link and config entry, what was
 // already right, and the packs the enabled and disabled skills and servers
 // belong to. Problems are always printed in full.
@@ -152,13 +151,18 @@ func printSync(a *app.App, report app.SyncReport) {
 	} else {
 		printTable(a, report)
 	}
-	scope := tilde(report.Scope.String())
-	for _, name := range report.Missing {
-		fmt.Printf("missing  %s is enabled but not found in its source\n", name)
-	}
 	if len(report.Extra) > 0 {
 		fmt.Printf("extra    %s: enabled in %s but switched off in its config file; `sync --clean` disables them\n",
-			strings.Join(report.Extra, ", "), scope)
+			strings.Join(report.Extra, ", "), tilde(report.Scope.String()))
+	}
+	printProblems(report)
+}
+
+// printProblems prints the skills missing from their sources, the servers
+// without their secrets, and the notes of a report.
+func printProblems(report app.SyncReport) {
+	for _, name := range report.Missing {
+		fmt.Printf("missing  %s is enabled but not found in its source\n", name)
 	}
 	for _, name := range sortedKeys(report.MissingSecrets) {
 		fmt.Printf("missing-secret mcp:%s is left as it is: no value for %s in the 1Password items or in %s\n",
@@ -169,7 +173,7 @@ func printSync(a *app.App, report app.SyncReport) {
 	}
 }
 
-// mark is one cell of the sync table.
+// mark is one cell of a table.
 type mark int
 
 const (
@@ -177,16 +181,19 @@ const (
 	markKeep                 // already right
 	markAdd                  // linked or written now
 	markRepair               // relinked or rewritten
-	markRemove               // unlinked or removed
+	markRemove               // unlinked or removed; in status: not on the disk
 	markConflict             // something in the way
+	markExtra                // on the disk, off in the config
 )
 
-// glyphs are the cells of the sync table: Nerd Font symbols on a terminal,
+// glyphs are the cells of the tables: Nerd Font symbols on a terminal,
 // letters when the output is piped, so that a program can read them.
 var (
-	nerdGlyphs  = [...]string{"\uf068", "\uf00c", "\uf067", "\uf021", "\uf00d", "\uf071"}
-	asciiGlyphs = [...]string{"-", "ok", "+", "~", "x", "!"}
-	glyphNames  = [...]string{"absent", "kept", "added", "repaired", "removed", "conflict"}
+	nerdGlyphs  = [...]string{"\uf068", "\uf00c", "\uf067", "\uf021", "\uf00d", "\uf071", "\uf06a"}
+	asciiGlyphs = [...]string{"-", "ok", "+", "~", "x", "!", "e"}
+	syncNames   = [...]string{"absent", "kept", "added", "repaired", "removed", "conflict", "extra"}
+	statusNames = [...]string{"absent", "on", "added", "sync repairs", "not on disk; sync enables", "conflict",
+		"off in config; sync --clean disables"}
 	glyphStyles = [...]lipgloss.Style{
 		lipgloss.NewStyle().Faint(true),
 		lipgloss.NewStyle().Foreground(lipgloss.Color("2")),
@@ -194,7 +201,9 @@ var (
 		lipgloss.NewStyle().Foreground(lipgloss.Color("3")),
 		lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true),
 		lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("5")),
 	}
+	styleHeading = lipgloss.NewStyle().Bold(true)
 )
 
 func markOf(op string) mark {
@@ -213,6 +222,22 @@ func markOf(op string) mark {
 	return markNone
 }
 
+func markOfState(state string) mark {
+	switch state {
+	case app.StateOn:
+		return markKeep
+	case app.StateDrift:
+		return markRemove
+	case app.StateRepair:
+		return markRepair
+	case app.StateConflict:
+		return markConflict
+	case app.StateExtra:
+		return markExtra
+	}
+	return markNone
+}
+
 // shortAgent is the column header of an agent.
 func shortAgent(name string) string {
 	for _, suffix := range []string{"-code", "-cli"} {
@@ -221,167 +246,154 @@ func shortAgent(name string) string {
 	return strings.TrimPrefix(name, "github-")
 }
 
-// printTable prints two tables: one row per skill, named by its folder
-// inside the clones, with a column per agent that has a skills directory,
-// and one row per server with a column per agent that has an MCP config.
-// Rows are grouped by pack; a row in several packs shows under the first.
+// table is one table of printTables: a row per skill or server, a column
+// per agent, and the packs shown as off without rows.
+type table struct {
+	title  string
+	agents []string
+	rows   []app.Row
+	mark   func(value string) mark
+	off    []string
+}
+
+func agentsOf(columns [][2]string) []string {
+	var names []string
+	for _, col := range columns {
+		names = append(names, col[0])
+	}
+	return names
+}
+
+// printTable prints the skills and servers that a report changed, one
+// table each, with a column per agent that has the directory or config.
 func printTable(a *app.App, report app.SyncReport) {
-	repos := a.Paths.ReposDir() + string(filepath.Separator)
-	var dirs, files []column
-	for _, name := range a.Catalog.Agents {
-		if agent, ok := link.Agents[name]; ok {
-			rel := agent.Global
-			if report.Scope.Project {
-				rel = agent.Project
+	changed := func(rows []app.Row) []app.Row {
+		return slices.DeleteFunc(rows, func(r app.Row) bool {
+			for _, op := range r.Agents {
+				if m := markOf(op); m != markNone && m != markKeep {
+					return false
+				}
 			}
-			if rel != "" {
-				dirs = append(dirs, column{name, filepath.Join(report.Scope.Root, filepath.FromSlash(rel))})
-			}
+			return true
+		})
+	}
+	skills, servers := a.Rows(report)
+	dirs, files := a.Columns(report.Scope)
+	scope := tilde(report.Scope.String())
+	printTables([]table{
+		{scope + " skills", agentsOf(dirs), changed(skills), markOf, nil},
+		{scope + " mcp", agentsOf(files), changed(servers), markOf, nil},
+	}, syncNames)
+}
+
+// printStatus prints every skill and server of a scope with its state per
+// agent, and the packs that are off.
+func printStatus(a *app.App, status app.Status) {
+	dirs, files := a.Columns(status.Report.Scope)
+	var offSkills, offServers []string
+	for _, pack := range status.OffPacks {
+		set := catalog.Set{Packs: []string{pack}}
+		if len(a.Catalog.Resolve(set)) > 0 || len(a.Catalog.ResolveMCPs(set)) == 0 {
+			offSkills = append(offSkills, pack)
 		}
-		if target, ok := mcp.Targets[name]; ok && !report.Scope.Project {
-			files = append(files, column{name, filepath.Join(a.Paths.Home, filepath.FromSlash(target.File))})
+		if len(a.Catalog.ResolveMCPs(set)) > 0 {
+			offServers = append(offServers, pack)
 		}
 	}
-	skills, servers := map[string]map[string]mark{}, map[string]map[string]mark{}
-	names := map[string]string{} // skill row label to skill name
-	for _, action := range slices.Concat(report.Actions, report.Kept) {
-		label := action.Name
-		if action.Target != "" {
-			label = strings.TrimPrefix(action.Target, repos)
-		} else if found, ok := a.Index.Lookup(a.Catalog, action.Name); ok {
-			label = strings.TrimPrefix(found.Dir, repos)
-		}
-		names[label] = action.Name
-		place(skills, dirs, label, action.Dir, markOf(action.Op))
+	scope := tilde(status.Report.Scope.String())
+	printTables([]table{
+		{scope + " skills", agentsOf(dirs), status.Skills, markOfState, offSkills},
+		{scope + " mcp", agentsOf(files), status.MCPs, markOfState, offServers},
+	}, statusNames)
+}
+
+// printTables prints tables whose first columns share one width, so that
+// their agent columns line up. Rows are grouped by their first pack, in
+// pack name order, and rows in no pack come last. One legend follows.
+func printTables(tables []table, names [7]string) {
+	tables = slices.DeleteFunc(tables, func(t table) bool {
+		return len(t.agents) == 0 || len(t.rows)+len(t.off) == 0
+	})
+	if len(tables) == 0 {
+		return
 	}
-	for _, action := range slices.Concat(report.MCP, report.KeptMCP) {
-		place(servers, files, action.Name, action.File, markOf(action.Op))
+	label := func(r app.Row) string {
+		if r.Label != "" {
+			return r.Label
+		}
+		return r.Name
+	}
+	width := 0
+	for _, t := range tables {
+		width = max(width, len(t.title))
+		for _, r := range t.rows {
+			width = max(width, len(label(r))+2) // rows are indented below their pack
+		}
 	}
 	glyphs := asciiGlyphs
 	if term.IsTerminal(int(os.Stdout.Fd())) {
 		glyphs = nerdGlyphs
 	}
-	scope := tilde(report.Scope.String())
 	used := map[mark]bool{}
-	printed := false
-	tables := []struct {
-		title   string
-		columns []column
-		rows    map[string]map[string]mark
-	}{{scope + " skills", dirs, skills}, {scope + " mcp", files, servers}}
-	// Both tables share the width of the first column, so that their agent
-	// columns line up.
-	width := 0
-	for _, table := range tables {
-		if len(table.rows) == 0 || len(table.columns) == 0 {
-			continue
-		}
-		width = max(width, len(table.title))
-		for label := range table.rows {
-			width = max(width, len(label)+2) // rows are indented below their pack
-		}
-	}
-	for _, table := range tables {
-		if len(table.rows) == 0 || len(table.columns) == 0 {
-			continue
-		}
-		if printed {
+	for i, t := range tables {
+		if i > 0 {
 			fmt.Println()
 		}
-		printed = true
-		fmt.Printf("%-*s", width, table.title)
-		for _, col := range table.columns {
-			fmt.Printf("  %s", shortAgent(col.name))
+		fmt.Printf("%-*s", width, t.title)
+		for _, agent := range t.agents {
+			fmt.Printf("  %s", shortAgent(agent))
 		}
 		fmt.Println()
-		skillTable := table.title == scope+" skills"
-		for _, group := range groupByPack(a.Catalog, sortedKeys(table.rows), func(label string) (string, bool) {
-			if skillTable {
-				return names[label], false
+		groups := map[string][]app.Row{}
+		for _, r := range t.rows {
+			pack := ""
+			if len(r.Packs) > 0 {
+				pack = r.Packs[0]
 			}
-			return label, true
-		}) {
-			fmt.Println(styleHeading.Render(group.pack))
-			for _, label := range group.rows {
-				fmt.Printf("  %-*s", width-2, label)
-				for _, col := range table.columns {
-					cell := table.rows[label][col.name]
-					used[cell] = true
-					name, span := shortAgent(col.name), lipgloss.Width(glyphs[cell])
-					pad := (len(name) - span) / 2
-					fmt.Printf("  %*s%s%*s", pad, "", glyphStyles[cell].Render(glyphs[cell]), len(name)-pad-span, "")
-				}
-				fmt.Println()
+			groups[pack] = append(groups[pack], r)
+		}
+		for _, pack := range slices.Sorted(slices.Values(append(sortedKeys(groups), t.off...))) {
+			rows := groups[pack]
+			switch {
+			case pack == "":
+				continue
+			case len(rows) == 0:
+				fmt.Println(glyphStyles[markNone].Render("@" + pack + "  off"))
+				continue
+			}
+			fmt.Println(styleHeading.Render("@" + pack))
+			for _, r := range rows {
+				printRow(r, label(r), width, t, glyphs, used)
 			}
 		}
-	}
-	if !printed {
-		return
+		if rows := groups[""]; len(rows) > 0 {
+			fmt.Println(styleHeading.Render("no pack"))
+			for _, r := range rows {
+				printRow(r, label(r), width, t, glyphs, used)
+			}
+		}
 	}
 	var legend []string
-	for cell := markNone; cell <= markConflict; cell++ {
+	for cell := markNone; cell <= markExtra; cell++ {
 		if used[cell] {
-			legend = append(legend, glyphStyles[cell].Render(glyphs[cell])+" "+glyphNames[cell])
+			legend = append(legend, glyphStyles[cell].Render(glyphs[cell])+" "+names[cell])
 		}
 	}
-	fmt.Println(glyphStyles[markNone].Render(strings.Join(legend, "   ")))
+	if len(legend) > 0 {
+		fmt.Println(glyphStyles[markNone].Render(strings.Join(legend, "   ")))
+	}
 }
 
-var styleHeading = lipgloss.NewStyle().Bold(true)
-
-type packRows struct {
-	pack string
-	rows []string
-}
-
-// groupByPack sorts rows into the packs of the catalog, in pack name order.
-// name gives a row's skill or server name, and whether it is a server. A row
-// in several packs goes to the first; rows in no pack come last.
-func groupByPack(cat *catalog.Catalog, rows []string, name func(string) (string, bool)) []packRows {
-	var groups []packRows
-	placed := map[string]bool{}
-	for _, pack := range cat.PackNames() {
-		set := catalog.Set{Packs: []string{pack}}
-		skills, servers := cat.Resolve(set), cat.ResolveMCPs(set)
-		group := packRows{pack: "@" + pack}
-		for _, row := range rows {
-			n, server := name(row)
-			if !placed[row] && (server && slices.Contains(servers, n) || !server && slices.Contains(skills, n)) {
-				placed[row] = true
-				group.rows = append(group.rows, row)
-			}
-		}
-		if len(group.rows) > 0 {
-			groups = append(groups, group)
-		}
+func printRow(r app.Row, label string, width int, t table, glyphs [7]string, used map[mark]bool) {
+	fmt.Printf("  %-*s", width-2, label)
+	for _, agent := range t.agents {
+		cell := t.mark(r.Agents[agent])
+		used[cell] = true
+		name, span := shortAgent(agent), lipgloss.Width(glyphs[cell])
+		pad := (len(name) - span) / 2
+		fmt.Printf("  %*s%s%*s", pad, "", glyphStyles[cell].Render(glyphs[cell]), max(len(name)-pad-span, 0), "")
 	}
-	rest := packRows{pack: "no pack"}
-	for _, row := range rows {
-		if !placed[row] {
-			rest.rows = append(rest.rows, row)
-		}
-	}
-	if len(rest.rows) > 0 {
-		groups = append(groups, rest)
-	}
-	return groups
-}
-
-// column is an agent in a sync table, with the directory or config file
-// that its cells describe.
-type column struct{ name, path string }
-
-// place records a cell in the row of label for the column whose path is
-// where; a stronger mark wins over a weaker one.
-func place(rows map[string]map[string]mark, columns []column, label, where string, cell mark) {
-	if rows[label] == nil {
-		rows[label] = map[string]mark{}
-	}
-	for _, col := range columns {
-		if col.path == where && cell > rows[label][col.name] {
-			rows[label][col.name] = cell
-		}
-	}
+	fmt.Println()
 }
 
 // printMembership prints, per pack, the skills and servers that a report
@@ -549,6 +561,70 @@ back with the next sync.`}
 			fmt.Println("nothing to change in", tilde(s.String()))
 		}
 		return err
+	}
+	return cmd
+}
+
+func statusCmd() *cobra.Command {
+	var asJSON bool
+	cmd := &cobra.Command{
+		Use:   "status",
+		Short: "Show every skill and server with its state per agent (global and the project)",
+		Long: `Show every skill and server with its state per agent, and change nothing.
+
+A table per scope and kind has a row per skill, named by its folder inside
+the clones, or per server, grouped by pack, and a column per agent:
+
+  on        on in the config file and on the disk
+  drift     on in the config file but not on the disk; sync enables it
+  extra     on the disk but off in the config file; sync --clean disables it
+  repair    on, but the link or entry needs rewriting; sync repairs it
+  conflict  something skillet does not own stands in the way
+  absent    the agent does not have it
+
+A pack switched off in the config file with nothing on the disk is one
+"off" line. --json prints the same as a list of scopes.`,
+		Args: cobra.NoArgs,
+	}
+	scope := scopeFlags(cmd)
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the states as JSON")
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		a, err := open()
+		if err != nil {
+			return err
+		}
+		chosen, err := scope(a)
+		if err != nil {
+			return err
+		}
+		scopes := []app.Scope{chosen}
+		if !cmd.Flags().Changed("global") && !cmd.Flags().Changed("project") {
+			if project, err := a.ProjectScope(); err == nil {
+				scopes = append(scopes, project)
+			}
+		}
+		var all []app.Status
+		for i, s := range scopes {
+			status, err := a.Status(s)
+			if err != nil {
+				return err
+			}
+			if asJSON {
+				all = append(all, status)
+				continue
+			}
+			if i > 0 {
+				fmt.Println()
+			}
+			printStatus(a, status)
+			printProblems(status.Report)
+		}
+		if asJSON {
+			out := json.NewEncoder(os.Stdout)
+			out.SetIndent("", "  ")
+			return out.Encode(all)
+		}
+		return nil
 	}
 	return cmd
 }

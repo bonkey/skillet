@@ -60,7 +60,7 @@ Archives for macOS and Linux are attached to each
 
    ```sh
    skillet sync
-   skillet list                             # what is on, and where
+   skillet status                           # what is on, per agent
    ```
 
 3. Take over what is already there. `import` reads the lock file of `npx skills` and the MCP
@@ -105,6 +105,7 @@ skillet sync --purge                     # and delete the skills and servers ski
 skillet sync --disable-mcps              # remove every server entry skillet manages; the config still switches them on
 skillet sync --disable-all               # disable everything skillet manages
 
+skillet status                           # every skill and server with its state per agent
 skillet list 'swift|ios' --enabled       # search names and descriptions; terms may be regexps
 skillet sources                          # every source with the ref it tracks and its commit
 skillet update                           # fetch all sources, report changed skills
@@ -119,10 +120,15 @@ MCP configs; with `--save` they also flip the entry's `enabled` flag in the conf
 of a config file is on unless it says `enabled = false`: `sync` enables what is on, clones sources
 that have no clone yet, gives every agent directory the same links and lets a link follow a skill
 that moved inside its source. What is enabled although its config file switches it off stays, and
-`sync` reports it as `extra`; `sync --clean` disables it. Commands print two tables with one column per
-agent: one row per skill, named by its folder inside the clones, and one row per server. Rows are grouped under their
-pack. A cell is already right, added, repaired, removed, a conflict, or absent where the agent lacks the entry. On a terminal the cells are Nerd Font symbols; piped, they are letters. `--verbose` prints
-every link and server entry instead, also those that were already right, and then the enabled
+`sync` reports it as `extra`; `sync --clean` disables it. Commands print what they changed in two tables with
+one column per agent: one row per skill, named by its folder inside the clones, and one row per
+server, grouped under their pack. A cell is added, repaired, removed, a conflict, already right,
+or absent where the agent lacks the entry. On a terminal the cells are Nerd Font symbols; piped,
+they are letters. `skillet status` prints the same tables for everything and changes nothing: a
+cell is on, not on the disk although the config switches it on (`sync` enables it), on the disk
+although the config switches it off (`sync --clean` disables it), in need of repair, a conflict or
+absent, and a pack that is off with nothing on the disk is one `off` line; `status --json` prints
+it for programs. `--verbose` prints every link and server entry instead, also those that were already right, and then the enabled
 skills and servers grouped by pack, the change grouped the same way, and the packs with nothing
 on.
 

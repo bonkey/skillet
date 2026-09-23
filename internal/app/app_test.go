@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -664,5 +665,46 @@ func TestRunEnablesSkillsOnlyWhileTheCommandRuns(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(e.p.Cwd, paths.ManifestName)); !os.IsNotExist(err) {
 		t.Error("run must not create a manifest")
+	}
+}
+
+func TestStatus(t *testing.T) {
+	e := setup(t)
+	global := filepath.Join(e.p.Home, ".claude", "skills")
+	state := func(rows []Row, name string) string {
+		for _, r := range rows {
+			if r.Name == name {
+				return r.Agents["claude-code"]
+			}
+		}
+		return "no row"
+	}
+
+	e.add(t, false)
+	status, err := e.app.Status(e.app.Global())
+	if err != nil || len(status.Skills) != 0 || !slices.Equal(status.OffPacks, []string{"acme"}) {
+		t.Fatalf("a pack that is off with nothing linked is one off pack: %+v %v", status, err)
+	}
+	if _, err := e.app.Toggle(e.app.Global(), true, false, "alpha"); err != nil {
+		t.Fatal(err)
+	}
+	status, _ = e.app.Status(e.app.Global())
+	if state(status.Skills, "alpha") != StateExtra || len(status.OffPacks) != 0 {
+		t.Errorf("a skill linked while its pack is off is extra, and the pack is no longer shown off: %+v", status)
+	}
+
+	e.add(t, true)
+	if _, err := e.app.Toggle(e.app.Global(), false, false, "beta"); err != nil {
+		t.Fatal(err)
+	}
+	status, _ = e.app.Status(e.app.Global())
+	if state(status.Skills, "alpha") != StateOn || state(status.Skills, "beta") != StateDrift {
+		t.Errorf("alpha is on, beta is on in the config but not linked: %+v", status.Skills)
+	}
+	if label := status.Skills[0].Label; label != "skills/skills/alpha" || !slices.Equal(status.Skills[0].Packs, []string{"acme"}) {
+		t.Errorf("a row names the folder inside the clones and its packs: %+v", status.Skills[0])
+	}
+	if isLink(filepath.Join(global, "beta")) {
+		t.Error("status changes nothing")
 	}
 }
