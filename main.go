@@ -102,7 +102,7 @@ is a source, and a bare name or "name@source" is a skill.`,
 	cmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "print every link and config entry, also those that are already right")
 	cmd.PersistentFlags().StringSliceVar(&agents, "agents", nil,
 		"act on these agents instead of those in the catalog (comma separated)")
-	cmd.AddCommand(importCmd(), toggleCmd(true), toggleCmd(false),
+	cmd.AddCommand(addCmd(), importCmd(), toggleCmd(true), toggleCmd(false),
 		syncCmd(), statusCmd(), listCmd(), updateCmd(), runCmd(), sourcesCmd(), gistCmd(), mcpCmd())
 	return cmd
 }
@@ -471,6 +471,97 @@ func printMembership(cat *catalog.Catalog, report app.SyncReport) {
 			fmt.Printf("%-8s %s: %s\n", "off", scope, strings.Join(idle, ", "))
 		}
 	}
+}
+
+func addCmd() *cobra.Command {
+	var skills []string
+	var name string
+	cmd := &cobra.Command{
+		Use:   "add <owner/repo|url|path> | add -- <command>...",
+		Short: "Put a skill source or an MCP server into the catalog",
+		Long: `Put a skill source or an MCP server into the catalog.
+
+A source is written as ` + "`npx skills add`" + ` takes it: owner/repo, owner/repo@skill,
+owner/repo/path, a GitHub or GitLab URL, a git URL or a local path, each
+with an optional #ref. Without --skill the source takes every skill it
+offers, also those it gains later. A ` + "`skills add`" + ` command may follow --: its
+--skill and --all count, its other options are ignored.
+
+A URL that is not a git repository is an MCP server when one answers there,
+and a command after -- that is not ` + "`skills add`" + ` starts a server;
+` + "`skillet add mcp`" + ` takes a server without checking. Values of URL parameters
+that look like secrets move to secrets.toml.
+
+add writes the config file only, the project's .skillet.toml with -p and
+config.toml otherwise; ` + "`skillet sync`" + ` enables what it added.
+
+  skillet add bonkey/skills --skill captains-log
+  skillet add -- npx skills add bonkey/skills -g --skill captains-log -y
+  skillet add https://mcp.exa.ai/mcp
+  skillet add -- npx @mobilenext/mobile-mcp@latest`,
+		Args: cobra.ArbitraryArgs,
+	}
+	scope := scopeFlags(cmd)
+	cmd.Flags().StringSliceVarP(&skills, "skill", "s", nil, "take only these skills of the source (comma separated)")
+	cmd.Flags().StringVar(&name, "name", "", "name the server instead of guessing it from its command or URL")
+	run := func(server bool, scope func(*app.App) (app.Scope, error)) func(*cobra.Command, []string) error {
+		return func(cmd *cobra.Command, args []string) error {
+			req := app.AddRequest{Skills: skills, Name: name, MCP: server}
+			switch dash := cmd.ArgsLenAtDash(); {
+			case dash == 0 && len(args) > 0:
+				req.Command = args
+			case dash < 0 && len(args) == 1:
+				req.Arg = args[0]
+			default:
+				return errors.New("give one source or URL, or a command after --")
+			}
+			a, err := open()
+			if err != nil {
+				return err
+			}
+			s := a.Global()
+			if scope != nil {
+				if s, err = scope(a); err != nil {
+					return err
+				}
+			}
+			report, err := a.Add(s, req)
+			if err != nil {
+				return err
+			}
+			for _, entry := range report.Present {
+				fmt.Printf("present  %s is in the catalog already\n", entry)
+			}
+			for _, note := range report.Notes {
+				fmt.Println("note    ", tilde(note))
+			}
+			if len(report.Secrets) > 0 {
+				fmt.Printf("secrets  %s: values kept in %s\n", strings.Join(report.Secrets, ", "), tilde(a.Paths.SecretsFile()))
+			}
+			if report.File != "" {
+				fmt.Printf("added    %s to %s; `skillet sync` enables it\n", strings.Join(report.Added, ", "), tilde(report.File))
+			}
+			return nil
+		}
+	}
+	cmd.RunE = run(false, scope)
+	server := &cobra.Command{
+		Use:   "mcp <url> | mcp -- <command>...",
+		Short: "Put an MCP server into the catalog, without checking the URL or the command",
+		Long: `Put an MCP server into the catalog, without checking the URL or the command.
+
+The server is named after the package its command starts, or after its
+host; --name names it otherwise. Values of URL parameters that look like
+secrets move to secrets.toml. ` + "`skillet sync`" + ` enables it.
+
+  skillet add mcp https://mcp.tavily.com/mcp/?tavilyApiKey=...
+  skillet add mcp -- npx @mobilenext/mobile-mcp@latest`,
+		Args: cobra.ArbitraryArgs,
+		RunE: run(true, nil),
+	}
+	server.Flags().StringVar(&name, "name", "", "name the server instead of guessing it from its command or URL")
+	cmd.AddCommand(server)
+	return cmd
 }
 
 func importCmd() *cobra.Command {
@@ -1018,7 +1109,8 @@ func mcpCmd() *cobra.Command {
 		Long: `Manage MCP servers.
 
 Servers are defined under "mcps" in the catalog and belong to packs next to
-skills. Enable and disable them like skills, written "mcp:<name>":
+skills; ` + "`skillet add mcp`" + ` puts one there. Enable and disable them like
+skills, written "mcp:<name>":
 
   skillet enable @ios mcp:tavily
   skillet disable mcp:simctl

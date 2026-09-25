@@ -8,16 +8,18 @@ symlinks. `README.md` describes the behaviour; keep it short and focused on the 
 - `main.go` — cobra commands; output formatting only
 - `internal/catalog` — the catalog file, packs, enabled flags, merging of `config.local.toml`, of
   included catalogs and of a project's `.skillet.toml`
-- `internal/source` — git clones, skill discovery, the description index
+- `internal/source` — git clones, skill discovery, the description index, sources written the
+  way `npx skills add` takes them
 - `internal/link` — the symlinks into the clones and their ownership rules; the links are the
   enabled state
 - `internal/session` — `skillet run` sessions
 - `internal/mcp` — MCP server entries in the agents' user configs: per-agent shapes, a
-  comment-preserving JSON editor, a text-level TOML section editor, ownership state
+  comment-preserving JSON editor, a text-level TOML section editor, ownership state, a probe
+  that tells an MCP endpoint from other URLs
 - `internal/secrets` — the values behind `${NAME}` placeholders: a local store and 1Password
   items, read lazily through the `op` CLI
 - `internal/gist` — gist access through `gh api`
-- `internal/importer` — the lock file of the `skills` npm CLI
+- `internal/importer` — the lock file of the `skills` npm CLI and its `skills add` commands
 - `internal/app` — every operation; the CLI and the TUI both call it
 - `internal/tui` — Bubble Tea front end; view state only
 - `skills/skillet/SKILL.md` — the skill that teaches agents to enable and disable skills with the CLI
@@ -25,8 +27,8 @@ symlinks. `README.md` describes the behaviour; keep it short and focused on the 
 
 `App.Local` is the user's catalog file. `App.Catalog` is `Local` merged with the included gists and
 the project's manifest, and is what everything reads. `enable`, `disable`, `sync` and `run` change
-links and the agents' MCP entries; only `enable` and `disable` with `--save`, `import` and the
-`gist` commands write a config file.
+links and the agents' MCP entries; only `enable` and `disable` with `--save`, `add`, `import` and
+the `gist` commands write a config file.
 
 ## Checks
 

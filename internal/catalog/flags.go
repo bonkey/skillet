@@ -70,16 +70,20 @@ func (s *Source) listed() []string {
 	return names
 }
 
-// takesAll reports whether the source takes every skill it offers: `only`
+// TakesAll reports whether the source takes every skill it offers: `only`
 // names none that is on.
-func (s *Source) takesAll() bool { return len(s.listed()) == 0 }
+func (s *Source) TakesAll() bool { return len(s.listed()) == 0 }
+
+// TakeAll makes the source take every skill it offers; the skills that are
+// switched off stay off.
+func (s *Source) TakeAll() { s.Skills = slices.Clone(s.Disabled) }
 
 // setSkill switches one skill of the source on or off in `only`. A source
 // that takes all keeps taking all: a skill switched on there leaves the
 // list, one switched off joins it as an entry that is off. A listed source
 // keeps at least one skill on, since a list without one would take all.
 func (s *Source) setSkill(skill string, on bool) error {
-	all := s.takesAll()
+	all := s.TakesAll()
 	if on {
 		s.Disabled = remove(s.Disabled, skill)
 		if all {

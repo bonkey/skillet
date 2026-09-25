@@ -53,7 +53,13 @@ Archives for macOS and Linux are attached to each
    ```
 
    Add a `[[skills]]` entry per repository you want and a `[[mcps]]` entry per server, then group
-   them into packs. The [Config](#config) section shows every key.
+   them into packs. The [Config](#config) section shows every key. `skillet add` writes the
+   entries for you:
+
+   ```sh
+   skillet add -- npx skills add bonkey/skills -g --skill captains-log -y
+   skillet add -- npx @mobilenext/mobile-mcp@latest
+   ```
 
 2. Switch it on. `sync` clones the sources, links every skill that is on into the agents' skills
    directories and writes the servers into their configs:
@@ -83,8 +89,8 @@ Archives for macOS and Linux are attached to each
 
 ## Main uses
 
-You write the catalog: sources, packs and servers go into `config.toml` by hand. skillet reads it
-and switches things on and off. In commands, `@name` is a pack, `mcp:name` is an MCP server,
+You write the catalog: packs go into `config.toml` by hand, sources and servers by hand or with
+`skillet add`. skillet reads it and switches things on and off. In commands, `@name` is a pack, `mcp:name` is an MCP server,
 `skills:name` is a whole source and a bare name is a skill. `-p` acts on the project around the
 working directory; the default is the global scope. `skillet <command> --help` lists every flag.
 
@@ -93,6 +99,12 @@ skillet                                  # TUI: browse, search, mark what to swi
 
 skillet import --dry-run                 # take over an existing `npx skills` install
 skillet import
+
+skillet add bonkey/skills --skill pr     # a source, or some of its skills; `sync` enables them
+skillet add -- npx skills add bonkey/skills -g --skill captains-log -y   # a pasted `npx skills` command
+skillet add https://mcp.exa.ai/mcp       # a server: a URL that is no git repository
+skillet add -- npx @mobilenext/mobile-mcp@latest   # a server's command
+skillet add mcp <url>                    # a server, without checking the URL
 
 skillet enable @craft                    # a whole pack, globally: its skills and its servers
 skillet disable top-design mcp:simctl-mcp  # single members of it
@@ -131,6 +143,14 @@ absent, and a pack that is off with nothing on the disk is one `off` line; `stat
 it for programs. `--verbose` prints every link and server entry instead, also those that were already right, and then the enabled
 skills and servers grouped by pack, the change grouped the same way, and the packs with nothing
 on.
+
+`add` takes a source as `npx skills add` does (`owner/repo`, `owner/repo@skill`,
+`owner/repo/path`, GitHub and GitLab URLs, git URLs and local paths, with an optional `#ref`), or a
+whole `npx skills add` command after `--`, of which `--skill` and `--all` count. It clones the
+source to check the skills and writes the entry into `config.toml`, or with `-p` into the
+project's `.skillet.toml`; it links nothing. A URL where git finds no repository is a server when
+an MCP server answers there, a command after `--` other than `skills add` starts a server, and
+`add mcp` takes a server without checking. Secret-looking URL parameters go to `secrets.toml`.
 
 `import` reads `~/.agents/.skill-lock.json`, fetches every source, creates one pack per source and
 enables everything. It **deletes** the folder of every imported skill in

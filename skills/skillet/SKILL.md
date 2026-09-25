@@ -34,8 +34,8 @@ matching servers the same way, with their command or URL as `target`.
    session. Meanwhile read its `SKILL.md` through the link in the skills directory, for example
    `.claude/skills/<name>/SKILL.md` or `~/.claude/skills/<name>/SKILL.md`, and follow it.
 3. No match: say that the catalog has nothing for this need. Only then look elsewhere, such as
-   another skill directory, the web, or writing a new skill, and leave adding a found skill to the
-   catalog to the user.
+   another skill directory, the web, or writing a new skill. Adding a found skill to the catalog
+   needs the user's yes (see Rules).
 
 ## See what is on
 
@@ -52,7 +52,7 @@ changes nothing. Use it, not the output of `enable` or `disable`, to tell what a
 - Read the catalog with `skillet list --json`. Take skill and pack names from that output; never guess them.
 - To switch a skill off, use `disable`. The catalog is the user's `config.toml`: do not edit it without the user's consent, and add `--save` only when the user asks for a lasting change.
 - Never add `--force`, `--purge`, `--disable-all`, `--disable-skills` or `--disable-mcps` on your own. `--force` deletes whatever stands in the way of a link, `sync --purge` deletes the skills and servers skillet does not manage, `sync --disable-all` disables everything it manages, and `--disable-skills` and `--disable-mcps` one kind of it. When a command prints a `conflict` line, show it to the user and ask.
-- Adding skills to the catalog is the user's decision: it holds skills the user has evaluated. Propose the lines for `~/.config/skillet/config.toml` and wait for a yes.
+- Adding skills to the catalog is the user's decision: it holds skills the user has evaluated. Propose the `skillet add` command and run it only after a yes. Where a skill's page gives an `npx skills add` command, run `skillet add -- <that command>` instead of `npx skills`. `add` only writes the config file and prints `added <skill>@<source>`, or `skills:<source>` for a whole source; `skillet enable <skill>` then switches it on.
 - Do not pass `--agents` unless the user asks to act on certain agents only.
 - Agents read their skills directories when a session starts. After a change, tell the user that a skill that does not show up yet is available in the next session.
 
@@ -131,8 +131,9 @@ project: say so, and offer to disable it globally and enable it with `-p` in the
   a `note` mentions 1Password, tell the user: they add a field `<NAME>` to their 1Password item,
   unlock 1Password, or add a `<NAME> = "value"` line to `~/.config/skillet/secrets.toml` themselves.
   The server is not enabled until then: run the `enable` command again afterwards.
-- Do not edit `~/.config/skillet/secrets.toml` or the agents' MCP config files by hand, and do not
-  add a server definition to the catalog without the user's consent.
+- Do not edit `~/.config/skillet/secrets.toml` or the agents' MCP config files by hand. To add a
+  server to the catalog, propose `skillet add mcp <url>` or `skillet add mcp -- <command>` and run
+  it only after the user's yes; `skillet enable mcp:<name>` then switches it on.
 
 ## For one session only
 
@@ -154,7 +155,7 @@ running in; suggest the command to the user.
 | `conflict <path> exists and is not managed by skillet` | A file, folder or foreign link stands where the skill goes. | Show the path to the user. With their consent, rerun the same command with `--force`, which deletes that entry. |
 | `missing <skill> is enabled but not found in its source` | The source is not cloned, or the skill left the repository. | Run `skillet update`, then `skillet sync`. If it stays missing, tell the user. |
 | `extra <names>: enabled in <scope> but switched off …` | `sync` found skills or servers that are enabled although the scope's config file switches them off. They stay enabled. | Nothing, unless the user wants only what the file switches on: then `skillet sync --clean`, with their consent. |
-| `unknown skill "<name>"` or `unknown pack "<name>"` | The name is not in the catalog. | Check `skillet list --json`. If the skill is not there, adding its source to `config.toml` is the user's call. |
+| `unknown skill "<name>"` or `unknown pack "<name>"` | The name is not in the catalog. | Check `skillet list --json`. If the skill is not there, adding it with `skillet add` is the user's call. |
 | `the home directory cannot be a project` | `-p` was used in `~`. | Use the global scope, or change to the project directory. |
 | `warning: gist …` | An included gist could not be reached; its cached copy is in use. | Carry on. Mention it if the user expected fresh data. |
 | `skillet: command not found` | skillet is not installed. | Ask the user to install it: `mise use -g github:bonkey/skillet` or `go install github.com/bonkey/skillet@latest`. |

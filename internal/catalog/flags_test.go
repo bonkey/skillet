@@ -39,7 +39,7 @@ enabled = false
 	if !reflect.DeepEqual(src.Skills, []string{"a", "b", "c"}) || !reflect.DeepEqual(src.Disabled, []string{"b"}) || !src.On() {
 		t.Fatalf("listed source: %+v", src)
 	}
-	if all := c.Sources["all"]; !all.takesAll() || all.On() || all.SkillOn("z") {
+	if all := c.Sources["all"]; !all.TakesAll() || all.On() || all.SkillOn("z") {
 		t.Fatalf("a source whose only holds nothing that is on takes all: %+v", all)
 	}
 	if c.Packs["p"].On() || c.MCPs["exa"].On() {
@@ -166,17 +166,17 @@ func TestSetFlags(t *testing.T) {
 	if err := c.SetSkillFlag("skills", "d", false); err == nil || !strings.Contains(err.Error(), "skills:skills") {
 		t.Errorf("the last listed skill that is on stays on, or the list would take all: %v", err)
 	}
-	if src := c.Sources["skills"]; src.takesAll() || !reflect.DeepEqual(src.Disabled, []string{"a", "b", "c"}) {
+	if src := c.Sources["skills"]; src.TakesAll() || !reflect.DeepEqual(src.Disabled, []string{"a", "b", "c"}) {
 		t.Errorf("after the refusal: %+v", src)
 	}
 
 	// A source that takes all keeps taking all.
 	c.SetSkillFlag("all", "z", false)
-	if src := c.Sources["all"]; !src.takesAll() || src.SkillOn("z") || !reflect.DeepEqual(src.Skills, []string{"z"}) {
+	if src := c.Sources["all"]; !src.TakesAll() || src.SkillOn("z") || !reflect.DeepEqual(src.Skills, []string{"z"}) {
 		t.Errorf("after disabling z: %+v", src)
 	}
 	c.SetSkillFlag("all", "z", true)
-	if src := c.Sources["all"]; !src.takesAll() || len(src.Skills) != 0 || len(src.Disabled) != 0 {
+	if src := c.Sources["all"]; !src.TakesAll() || len(src.Skills) != 0 || len(src.Disabled) != 0 {
 		t.Errorf("after enabling z again: %+v", src)
 	}
 	if err := c.SetSkillFlag("ghost", "z", true); err == nil {

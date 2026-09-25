@@ -1,4 +1,5 @@
-// Package importer reads the global lock file of the `skills` npm CLI.
+// Package importer reads the global lock file of the `skills` npm CLI and
+// its `skills add` commands.
 package importer
 
 import (

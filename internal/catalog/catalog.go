@@ -547,7 +547,7 @@ func (c *Catalog) ExpandAll(offered map[string][]string) {
 // needs no names and stays as it is.
 func (c *Catalog) AddSkills(url, ref string, skills []string) (string, error) {
 	name, src := c.SourceAt(url)
-	if src != nil && src.takesAll() {
+	if src != nil && src.TakesAll() {
 		return name, nil
 	}
 	for _, skill := range skills {
@@ -566,6 +566,21 @@ func (c *Catalog) AddSkills(url, ref string, skills []string) (string, error) {
 		src.Skills = add(src.Skills, skill)
 	}
 	return name, nil
+}
+
+// AddSource records a source and returns the name it goes by. Other
+// sources without a name that share its repository name are renamed; a
+// source added with a Name renames none.
+func (c *Catalog) AddSource(src *Source) (string, error) {
+	if err := c.addSource(src); err != nil {
+		return "", err
+	}
+	for name, s := range c.Sources {
+		if s == src {
+			return name, nil
+		}
+	}
+	return "", nil
 }
 
 // SourceAt finds the source with a URL.
@@ -742,7 +757,7 @@ func Merge(local *Catalog, ids []string, included []*Catalog) (*Catalog, error) 
 	merged.SkillOrigin, merged.SourceOrigin = map[string]string{}, map[string]string{}
 	merged.MCPOrigin, merged.PackOrigin = map[string]string{}, map[string]string{}
 	for _, src := range merged.Sources {
-		src.All = src.takesAll()
+		src.All = src.TakesAll()
 	}
 	for i, inc := range included {
 		for _, name := range sortedKeys(inc.Sources) {
@@ -750,7 +765,7 @@ func Merge(local *Catalog, ids []string, included []*Catalog) (*Catalog, error) 
 			if own, ok := merged.Sources[name]; ok && own.All {
 				continue
 			}
-			if src.takesAll() {
+			if src.TakesAll() {
 				merged.Sources[name] = &Source{URL: src.URL, Ref: src.Ref, Path: src.Path, Enabled: src.Enabled,
 					Skills: slices.Clone(src.Disabled), Disabled: slices.Clone(src.Disabled), All: true}
 				merged.SourceOrigin[name] = ids[i]
