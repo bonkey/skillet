@@ -37,8 +37,9 @@ type AddReport struct {
 	cloned  []string // the clones Add made, removed again when it fails
 }
 
-// Add puts skill sources or a server into the scope's config file. It links
-// nothing and writes no agent config; the next sync enables what it added.
+// Add puts skill sources or a server into the scope's config file, keeping
+// the file's text (see catalog.Amend). It links nothing and writes no agent
+// config; the next sync enables what it added.
 // A source is cloned to check the skills it offers. Unless MCP is set, a URL
 // is a source when git can read it and a server when an MCP server answers
 // there, and a command other than `skills add` starts a server.
@@ -112,14 +113,12 @@ func (a *App) Add(scope Scope, req AddRequest) (AddReport, error) {
 	if len(report.Added) == 0 {
 		return report, nil
 	}
-	var err error
-	if scope.Project {
-		if err = target.Save(file); err == nil {
-			a.Project = target
-			err = a.merge()
-		}
-	} else {
-		err = a.Save()
+	err := target.Amend(file)
+	if err == nil && scope.Project {
+		a.Project = target
+		err = a.merge()
+	} else if err == nil {
+		err = a.reload(false)
 	}
 	if err != nil {
 		return fail(err)
@@ -351,13 +350,16 @@ func (a *App) addServer(scope Scope, req AddRequest) (AddReport, error) {
 		if err := os.MkdirAll(a.Paths.Config, 0o755); err != nil {
 			return report, err
 		}
-		if err := store.Save(a.Paths.SecretsFile()); err != nil {
+		if err := store.Amend(a.Paths.SecretsFile()); err != nil {
 			return report, err
 		}
 		report.Secrets = sortedKeys(hidden)
 	}
 	a.Local.MCPs[name] = &def
-	if err := a.Save(); err != nil {
+	if err := a.Local.Amend(a.Paths.ConfigFile()); err != nil {
+		return report, err
+	}
+	if err := a.reload(false); err != nil {
 		return report, err
 	}
 	report.File, report.Added = a.Paths.ConfigFile(), []string{catalog.MCPPrefix + name}

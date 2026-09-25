@@ -147,10 +147,12 @@ on.
 `add` takes a source as `npx skills add` does (`owner/repo`, `owner/repo@skill`,
 `owner/repo/path`, GitHub and GitLab URLs, git URLs and local paths, with an optional `#ref`), or a
 whole `npx skills add` command after `--`, of which `--skill` and `--all` count. It clones the
-source to check the skills and writes the entry into `config.toml`, or with `-p` into the
-project's `.skillet.toml`; it links nothing. A URL where git finds no repository is a server when
-an MCP server answers there, a command after `--` other than `skills add` starts a server, and
-`add mcp` takes a server without checking. Secret-looking URL parameters go to `secrets.toml`.
+source to check the skills and appends the entry to `config.toml`, or with `-p` to the project's
+`.skillet.toml`, where an existing entry changes only its `only` list. Comments stay: a list that
+holds comments is left for you to change. It links nothing. A URL where git finds no repository
+is a server when an MCP server answers there, a command after `--` other than `skills add` starts
+a server, and `add mcp` takes a server without checking. Secret-looking URL parameters are
+appended to `secrets.toml`.
 
 `import` reads `~/.agents/.skill-lock.json`, fetches every source, creates one pack per source and
 enables everything. It **deletes** the folder of every imported skill in

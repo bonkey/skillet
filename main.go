@@ -493,7 +493,10 @@ and a command after -- that is not ` + "`skills add`" + ` starts a server;
 that look like secrets move to secrets.toml.
 
 add writes the config file only, the project's .skillet.toml with -p and
-config.toml otherwise; ` + "`skillet sync`" + ` enables what it added.
+config.toml otherwise; ` + "`skillet sync`" + ` enables what it added. New entries
+are appended and an existing entry changes only its "only" list, so the
+comments and layout of the file stay; a list that holds comments is left
+for you to change.
 
   skillet add bonkey/skills --skill captains-log
   skillet add -- npx skills add bonkey/skills -g --skill captains-log -y

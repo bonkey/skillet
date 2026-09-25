@@ -219,6 +219,34 @@ func TestAddTellsAServerURLFromARepository(t *testing.T) {
 	}
 }
 
+func TestAddKeepsTheTextOfTheFiles(t *testing.T) {
+	e := setup(t)
+	config := "# my catalog\nagents = ['claude-code']   # just one\n\n[[skills]]                  # acme\nurl = '" + e.origin +
+		"'\nonly = ['alpha']   # the first\n"
+	e.open(t, config)
+	secrets := "# values\nOLD = 'made-up'   # rotated\n"
+	write(t, e.p.SecretsFile(), secrets)
+
+	if _, err := e.app.Add(e.app.Global(), AddRequest{Arg: "https://mcp.tavily.com/mcp/?tavilyApiKey=made-up-too", MCP: true}); err != nil {
+		t.Fatal(err)
+	}
+	got := read(t, e.p.ConfigFile())
+	if !strings.HasPrefix(got, config+"\n[[mcps]]\n") {
+		t.Fatalf("a server is appended:\n%s", got)
+	}
+	if got := read(t, e.p.SecretsFile()); !strings.HasPrefix(got, secrets) || !strings.Contains(got, "TAVILY_API_KEY") {
+		t.Fatalf("a secret is appended:\n%s", got)
+	}
+
+	if _, err := e.app.Add(e.app.Global(), AddRequest{Arg: e.origin, Skills: []string{"beta"}}); err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Replace(got, "only = ['alpha']   # the first", "only = ['alpha', 'beta']   # the first", 1)
+	if got := read(t, e.p.ConfigFile()); got != want {
+		t.Fatalf("only the list changes:\n%s", got)
+	}
+}
+
 func TestAddRefusesWhatTheLocalFileDefines(t *testing.T) {
 	e := setup(t)
 	write(t, e.p.LocalConfigFile(), "[[mcps]]\ncommand = ['npx', 'mobile-mcp']\n")
