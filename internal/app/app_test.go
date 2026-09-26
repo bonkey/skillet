@@ -681,23 +681,27 @@ func TestStatus(t *testing.T) {
 	}
 
 	e.add(t, false)
-	status, err := e.app.Status(e.app.Global())
-	if err != nil || len(status.Skills) != 0 || !slices.Equal(status.OffPacks, []string{"acme"}) {
-		t.Fatalf("a pack that is off with nothing linked is one off pack: %+v %v", status, err)
+	status, err := e.app.Status(e.app.Global(), false)
+	if err != nil || state(status.Skills, "alpha") != StateOff || state(status.Skills, "beta") != StateOff ||
+		!slices.Equal(status.OffPacks, []string{"acme"}) {
+		t.Fatalf("the skills of a pack that is off are off: %+v %v", status, err)
+	}
+	if label := status.Skills[1].Label; label != "skills/skills/beta" || !slices.Equal(status.Skills[1].Packs, []string{"acme"}) {
+		t.Errorf("an off row names the folder inside the clones and its packs: %+v", status.Skills[1])
 	}
 	if _, err := e.app.Toggle(e.app.Global(), true, false, "alpha"); err != nil {
 		t.Fatal(err)
 	}
-	status, _ = e.app.Status(e.app.Global())
-	if state(status.Skills, "alpha") != StateExtra || len(status.OffPacks) != 0 {
-		t.Errorf("a skill linked while its pack is off is extra, and the pack is no longer shown off: %+v", status)
+	status, _ = e.app.Status(e.app.Global(), false)
+	if state(status.Skills, "alpha") != StateExtra || state(status.Skills, "beta") != StateOff || !slices.Equal(status.OffPacks, []string{"acme"}) {
+		t.Errorf("a skill linked while its pack is off is extra, and the pack stays off: %+v", status)
 	}
 
 	e.add(t, true)
 	if _, err := e.app.Toggle(e.app.Global(), false, false, "beta"); err != nil {
 		t.Fatal(err)
 	}
-	status, _ = e.app.Status(e.app.Global())
+	status, _ = e.app.Status(e.app.Global(), false)
 	if state(status.Skills, "alpha") != StateOn || state(status.Skills, "beta") != StateDrift {
 		t.Errorf("alpha is on, beta is on in the config but not linked: %+v", status.Skills)
 	}
@@ -706,5 +710,75 @@ func TestStatus(t *testing.T) {
 	}
 	if isLink(filepath.Join(global, "beta")) {
 		t.Error("status changes nothing")
+	}
+}
+
+func TestStatusOfServersAndUnmanagedEntries(t *testing.T) {
+	e := setup(t)
+	withServers(t, &e)
+	claude := filepath.Join(e.p.Home, ".claude.json")
+	write(t, filepath.Join(e.p.Home, ".claude", "skills", "hand", "SKILL.md"), "hand\n")
+	os.MkdirAll(filepath.Join(e.p.Home, ".claude", "skills", ".hidden"), 0o755)
+	os.MkdirAll(filepath.Join(e.p.Home, ".codex", "skills", "beta"), 0o755)
+	write(t, claude, `{"mcpServers": {"mine": {"command": "untouched"}}}`)
+	cells := func(rows []Row, name string, unmanaged bool) map[string]string {
+		for _, r := range rows {
+			if r.Name == name && r.Unmanaged == unmanaged {
+				return r.Agents
+			}
+		}
+		return nil
+	}
+	off := map[string]string{"claude-code": StateOff, "codex": StateOff}
+
+	status, err := e.app.Status(e.app.Global(), false)
+	if err != nil || !reflect.DeepEqual(cells(status.MCPs, "simctl", false), off) || !reflect.DeepEqual(cells(status.MCPs, "tavily", false), off) {
+		t.Fatalf("the servers of a pack that is off are off: %+v %v", status.MCPs, err)
+	}
+	if slices.ContainsFunc(slices.Concat(status.Skills, status.MCPs), func(r Row) bool { return r.Unmanaged }) {
+		t.Errorf("without asking, status leaves out what skillet does not manage: %+v", status)
+	}
+
+	status, err = e.app.Status(e.app.Global(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cells(status.Skills, "hand", true); !reflect.DeepEqual(got, map[string]string{"claude-code": StateUnmanaged, "codex": StateAbsent}) {
+		t.Errorf("a folder skillet does not manage is unmanaged: %v in %+v", got, status.Skills)
+	}
+	if got := cells(status.MCPs, "mine", true); !reflect.DeepEqual(got, map[string]string{"claude-code": StateUnmanaged, "codex": StateAbsent}) {
+		t.Errorf("an entry skillet does not manage is unmanaged: %v in %+v", got, status.MCPs)
+	}
+	if !reflect.DeepEqual(cells(status.Skills, "beta", false), off) || cells(status.Skills, "beta", true)["codex"] != StateUnmanaged {
+		t.Errorf("a folder named like a catalog skill is a row of its own: %+v", status.Skills)
+	}
+	for _, r := range status.Skills {
+		if r.Unmanaged && (r.Label != r.Name || len(r.Packs) != 0) {
+			t.Errorf("an unmanaged row is named by its folder and in no pack: %+v", r)
+		}
+	}
+	if cells(status.Skills, ".hidden", true) != nil {
+		t.Error("hidden entries are not listed")
+	}
+	if _, err := os.Stat(filepath.Join(e.p.Home, ".claude", "skills", "hand")); err != nil || !strings.Contains(read(t, claude), "untouched") {
+		t.Error("status changes nothing")
+	}
+}
+
+func TestStatusListsAnOffRowUnderThePackThatIsOff(t *testing.T) {
+	e := setup(t)
+	e.add(t, true)
+	write(t, filepath.Join(e.p.Cwd, paths.ManifestName), "[[packs]]\nname = 'proj'\ndescription = 'Project'\nenabled = false\nskills = ['beta']\n")
+	a, err := Open(e.p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope, _ := a.ProjectScope()
+	status, err := a.Status(scope, false)
+	if err != nil || len(status.Skills) != 1 || !slices.Equal(status.OffPacks, []string{"proj"}) {
+		t.Fatalf("the project's pack is off: %+v %v", status, err)
+	}
+	if r := status.Skills[0]; r.Name != "beta" || r.Agents["claude-code"] != StateOff || !slices.Equal(r.Packs, []string{"proj", "acme"}) {
+		t.Errorf("the pack that is off comes first, so that the row is listed under it: %+v", r)
 	}
 }

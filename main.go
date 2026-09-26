@@ -177,23 +177,24 @@ func printProblems(report app.SyncReport) {
 type mark int
 
 const (
-	markNone     mark = iota // the agent has no such directory or config
-	markKeep                 // already right
-	markAdd                  // linked or written now
-	markRepair               // relinked or rewritten
-	markRemove               // unlinked or removed; in status: not on the disk
-	markConflict             // something in the way
-	markExtra                // on the disk, off in the config
+	markNone      mark = iota // the agent has no such directory or config
+	markKeep                  // already right
+	markAdd                   // linked or written now
+	markRepair                // relinked or rewritten
+	markRemove                // unlinked or removed; in status: not on the disk
+	markConflict              // something in the way
+	markExtra                 // on the disk, off in the config
+	markUnmanaged             // on the disk, not managed by skillet
 )
 
 // glyphs are the cells of the tables: Nerd Font symbols on a terminal,
 // letters when the output is piped, so that a program can read them.
 var (
-	nerdGlyphs  = [...]string{"\uf068", "\uf00c", "\uf067", "\uf021", "\uf00d", "\uf071", "\uf06a"}
-	asciiGlyphs = [...]string{"-", "ok", "+", "~", "x", "!", "e"}
-	syncNames   = [...]string{"absent", "kept", "added", "repaired", "removed", "conflict", "extra"}
+	nerdGlyphs  = [...]string{"\uf068", "\uf00c", "\uf067", "\uf021", "\uf00d", "\uf071", "\uf06a", "\uf10c"}
+	asciiGlyphs = [...]string{"-", "ok", "+", "~", "x", "!", "e", "u"}
+	syncNames   = [...]string{"absent", "kept", "added", "repaired", "removed", "conflict", "extra", "unmanaged"}
 	statusNames = [...]string{"absent", "on", "added", "sync repairs", "not on disk; sync enables", "conflict",
-		"off in config; sync --clean disables"}
+		"off in config; sync --clean disables", "not managed by skillet"}
 	glyphStyles = [...]lipgloss.Style{
 		lipgloss.NewStyle().Faint(true),
 		lipgloss.NewStyle().Foreground(lipgloss.Color("2")),
@@ -202,6 +203,7 @@ var (
 		lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true),
 		lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true),
 		lipgloss.NewStyle().Foreground(lipgloss.Color("5")),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("6")),
 	}
 	styleHeading = lipgloss.NewStyle().Bold(true)
 )
@@ -234,6 +236,8 @@ func markOfState(state string) mark {
 		return markConflict
 	case app.StateExtra:
 		return markExtra
+	case app.StateUnmanaged:
+		return markUnmanaged
 	}
 	return markNone
 }
@@ -247,7 +251,7 @@ func shortAgent(name string) string {
 }
 
 // table is one table of printTables: a row per skill or server, a column
-// per agent, and the packs shown as off without rows.
+// per agent, and the packs that are off.
 type table struct {
 	title  string
 	agents []string
@@ -309,8 +313,9 @@ func printStatus(a *app.App, status app.Status) {
 
 // printTables prints tables whose first columns share one width, so that
 // their agent columns line up. Rows are grouped by their first pack, in
-// pack name order, and rows in no pack come last. One legend follows.
-func printTables(tables []table, names [7]string) {
+// pack name order; rows in no pack and then unmanaged rows come last. One
+// legend follows.
+func printTables(tables []table, names [8]string) {
 	tables = slices.DeleteFunc(tables, func(t table) bool {
 		return len(t.agents) == 0 || len(t.rows)+len(t.off) == 0
 	})
@@ -345,36 +350,44 @@ func printTables(tables []table, names [7]string) {
 		}
 		fmt.Println()
 		groups := map[string][]app.Row{}
+		var unmanaged []app.Row
 		for _, r := range t.rows {
-			pack := ""
-			if len(r.Packs) > 0 {
-				pack = r.Packs[0]
+			switch {
+			case r.Unmanaged:
+				unmanaged = append(unmanaged, r)
+			case len(r.Packs) > 0:
+				groups[r.Packs[0]] = append(groups[r.Packs[0]], r)
+			default:
+				groups[""] = append(groups[""], r)
 			}
-			groups[pack] = append(groups[pack], r)
 		}
-		for _, pack := range slices.Sorted(slices.Values(append(sortedKeys(groups), t.off...))) {
-			rows := groups[pack]
+		for _, pack := range slices.Compact(slices.Sorted(slices.Values(append(sortedKeys(groups), t.off...)))) {
 			switch {
 			case pack == "":
 				continue
-			case len(rows) == 0:
+			case slices.Contains(t.off, pack):
 				fmt.Println(glyphStyles[markNone].Render("@" + pack + "  off"))
-				continue
+			default:
+				fmt.Println(styleHeading.Render("@" + pack))
 			}
-			fmt.Println(styleHeading.Render("@" + pack))
-			for _, r := range rows {
+			for _, r := range groups[pack] {
 				printRow(r, label(r), width, t, glyphs, used)
 			}
 		}
-		if rows := groups[""]; len(rows) > 0 {
-			fmt.Println(styleHeading.Render("no pack"))
-			for _, r := range rows {
+		for _, group := range []struct {
+			heading string
+			rows    []app.Row
+		}{{"no pack", groups[""]}, {"unmanaged", unmanaged}} {
+			if len(group.rows) > 0 {
+				fmt.Println(styleHeading.Render(group.heading))
+			}
+			for _, r := range group.rows {
 				printRow(r, label(r), width, t, glyphs, used)
 			}
 		}
 	}
 	var legend []string
-	for cell := markNone; cell <= markExtra; cell++ {
+	for cell := markNone; cell <= markUnmanaged; cell++ {
 		if used[cell] {
 			legend = append(legend, glyphStyles[cell].Render(glyphs[cell])+" "+names[cell])
 		}
@@ -384,7 +397,7 @@ func printTables(tables []table, names [7]string) {
 	}
 }
 
-func printRow(r app.Row, label string, width int, t table, glyphs [7]string, used map[mark]bool) {
+func printRow(r app.Row, label string, width int, t table, glyphs [8]string, used map[mark]bool) {
 	fmt.Printf("  %-*s", width-2, label)
 	for _, agent := range t.agents {
 		cell := t.mark(r.Agents[agent])
@@ -660,7 +673,7 @@ back with the next sync.`}
 }
 
 func statusCmd() *cobra.Command {
-	var asJSON bool
+	var asJSON, unmanaged bool
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show every skill and server with its state per agent (global and the project)",
@@ -669,19 +682,24 @@ func statusCmd() *cobra.Command {
 A table per scope and kind has a row per skill, named by its folder inside
 the clones, or per server, grouped by pack, and a column per agent:
 
-  on        on in the config file and on the disk
-  drift     on in the config file but not on the disk; sync enables it
-  extra     on the disk but off in the config file; sync --clean disables it
-  repair    on, but the link or entry needs rewriting; sync repairs it
-  conflict  something skillet does not own stands in the way
-  absent    the agent does not have it
+  on         on in the config file and on the disk
+  drift      on in the config file but not on the disk; sync enables it
+  extra      on the disk but off in the config file; sync --clean disables it
+  repair     on, but the link or entry needs rewriting; sync repairs it
+  conflict   something skillet does not own stands in the way
+  unmanaged  on the disk but not managed by skillet
+  absent     the agent does not have it
 
-A pack switched off in the config file with nothing on the disk is one
-"off" line. --json prints the same as a list of scopes.`,
+A pack switched off in the config file is headed "off" and lists its
+members; one that is not on the disk is absent for every agent, and "off"
+in --json. --unmanaged also lists, under "unmanaged", the skills and servers
+in the agents' directories and configs that skillet does not manage: those
+sync --purge deletes. --json prints the same as a list of scopes.`,
 		Args: cobra.NoArgs,
 	}
 	scope := scopeFlags(cmd)
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the states as JSON")
+	cmd.Flags().BoolVarP(&unmanaged, "unmanaged", "u", false, "also list the skills and servers skillet does not manage")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		a, err := open()
 		if err != nil {
@@ -699,7 +717,7 @@ A pack switched off in the config file with nothing on the disk is one
 		}
 		var all []app.Status
 		for i, s := range scopes {
-			status, err := a.Status(s)
+			status, err := a.Status(s, unmanaged)
 			if err != nil {
 				return err
 			}

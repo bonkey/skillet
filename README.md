@@ -118,6 +118,7 @@ skillet sync --disable-mcps              # remove every server entry skillet man
 skillet sync --disable-all               # disable everything skillet manages
 
 skillet status                           # every skill and server with its state per agent
+skillet status --unmanaged               # and those skillet does not manage
 skillet list 'swift|ios' --enabled       # search names and descriptions; terms may be regexps
 skillet sources                          # every source with the ref it tracks and its commit
 skillet update                           # fetch all sources, report changed skills
@@ -134,13 +135,15 @@ that have no clone yet, gives every agent directory the same links and lets a li
 that moved inside its source. What is enabled although its config file switches it off stays, and
 `sync` reports it as `extra`; `sync --clean` disables it. Commands print what they changed in two tables with
 one column per agent: one row per skill, named by its folder inside the clones, and one row per
-server, grouped under their pack. A cell is added, repaired, removed, a conflict, already right,
+server, grouped under their pack, or under `unmanaged` when skillet does not manage it.
+A cell is added, repaired, removed, a conflict, already right,
 or absent where the agent lacks the entry. On a terminal the cells are Nerd Font symbols; piped,
 they are letters. `skillet status` prints the same tables for everything and changes nothing: a
 cell is on, not on the disk although the config switches it on (`sync` enables it), on the disk
 although the config switches it off (`sync --clean` disables it), in need of repair, a conflict or
-absent, and a pack that is off with nothing on the disk is one `off` line; `status --json` prints
-it for programs. `--verbose` prints every link and server entry instead, also those that were already right, and then the enabled
+absent. A pack that is off is headed `off` and lists its members. `status --unmanaged` also lists
+the skills and servers skillet does not manage; `status --json` prints it for programs.
+`--verbose` prints every link and server entry instead, also those that were already right, and then the enabled
 skills and servers grouped by pack, the change grouped the same way, and the packs with nothing
 on.
 

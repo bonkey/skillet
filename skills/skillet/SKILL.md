@@ -39,12 +39,15 @@ matching servers the same way, with their command or URL as `target`.
 
 ## See what is on
 
-`skillet status --json` lists, per scope, every skill and server that is on or needs attention,
-with a state per agent: `on`; `drift`, on in the config file but not on the disk, which `sync`
-enables; `extra`, on the disk but off in the config file, which `sync --clean` disables; `repair`,
-which `sync` rewrites; `conflict`, something skillet does not own in the way; `absent`, the agent
-does not have it. `off_packs` lists the packs switched off with nothing on the disk. `status`
-changes nothing. Use it, not the output of `enable` or `disable`, to tell what an agent has.
+`skillet status --json` lists, per scope, every skill and server that is on, needs attention or
+is in a pack that is off, with a state per agent: `on`; `drift`, on in the config file but not on
+the disk, which `sync` enables; `extra`, on the disk but off in the config file, which
+`sync --clean` disables; `off`, in a pack that is off and not on the disk; `repair`, which `sync`
+rewrites; `conflict`, something skillet does not own in the way; `absent`, the agent does not
+have it. `off_packs` lists the packs switched off in the config file. `--unmanaged` adds the
+skills and servers skillet does not manage, marked `"unmanaged": true`, with the state
+`unmanaged` where an agent has them. `status` changes nothing. Use it, not the output of `enable`
+or `disable`, to tell what an agent has.
 
 ## Rules
 
@@ -106,7 +109,8 @@ project: say so, and offer to disable it globally and enable it with `-p` in the
 4. Read the output. It lists only what changed, in two tables headed by the scope: `skills` with
    one row per skill, named by its folder inside the clones, and `mcp` with one row per server,
    each with one column per agent that has a skills directory or an MCP config. Rows are grouped
-   under `@pack` lines, and those in no pack under `no pack`. A cell is `+` added, `~` repaired,
+   under `@pack` lines, those in no pack under `no pack`, and those skillet does not manage under
+   `unmanaged`. A cell is `+` added, `~` repaired,
    `x` removed, `!` a conflict, `ok` already right, or `-` where the agent lacks the entry; a
    legend follows. With `--verbose` each line is one link with its path, `keep` lines list the links that were already right, `enabled` lines group what is on by pack, `enable` and `disable` lines the change, and `off` names the packs with nothing on.
    `nothing to change` means the state already matched. Handle `conflict`, `missing` and `extra`
