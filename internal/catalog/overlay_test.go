@@ -131,3 +131,28 @@ func writeTemp(t *testing.T, content string) string {
 	}
 	return file
 }
+
+func TestGitProtocol(t *testing.T) {
+	if _, err := Parse([]byte("git_protocol = 'git'\n")); err == nil || !strings.Contains(err.Error(), "git_protocol") {
+		t.Errorf("an unknown protocol is refused: %v", err)
+	}
+	base, err := Parse([]byte("git_protocol = 'https'\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	over, err := LoadOverlay(writeTemp(t, "git_protocol = 'ssh'\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	merged, err := Overlay(base, over)
+	if err != nil || merged.GitProtocol != "ssh" {
+		t.Fatalf("the overlay sets the protocol: %q %v", merged.GitProtocol, err)
+	}
+	if merged, _ = Overlay(base, New()); merged.GitProtocol != "https" {
+		t.Errorf("an overlay without it keeps the base's: %q", merged.GitProtocol)
+	}
+	included, _ := Parse([]byte("git_protocol = 'ssh'\n"))
+	if merged, err = Merge(base, []string{"g"}, []*Catalog{included}); err != nil || merged.GitProtocol != "https" {
+		t.Errorf("an included catalog does not choose the protocol: %q %v", merged.GitProtocol, err)
+	}
+}

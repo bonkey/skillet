@@ -156,7 +156,7 @@ func (a *App) addSource(scope Scope, target *catalog.Catalog, spec source.Spec, 
 		}
 		defer os.RemoveAll(tmp)
 		dir = filepath.Join(tmp, "clone")
-		if err := source.Clone(spec.URL, spec.Ref, dir); err != nil {
+		if err := source.Clone(a.cloneURL(spec.URL), spec.Ref, dir); err != nil {
 			return err
 		}
 	}

@@ -496,7 +496,10 @@ func addCmd() *cobra.Command {
 
 A source is written as ` + "`npx skills add`" + ` takes it: owner/repo, owner/repo@skill,
 owner/repo/path, a GitHub or GitLab URL, a git URL or a local path, each
-with an optional #ref. Without --skill the source takes every skill it
+with an optional #ref. A git URL such as git@github.com:owner/repo.git is
+cloned over SSH; with git_protocol = "ssh" in config.toml or
+config.local.toml, GitHub and GitLab sources are too, while the config file
+keeps the URL as written. Without --skill the source takes every skill it
 offers, also those it gains later. An http(s) URL of a .md file is one
 free-standing SKILL.md, named after its skill; adding another URL for that
 skill replaces the URL, which is how a pinned version moves on. A ` + "`skills add`" + ` command may follow --: its
@@ -914,7 +917,11 @@ func updateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "update",
 		Short: "Fetch all sources, report changed skills and move the clones forward",
-		Args:  cobra.NoArgs,
+		Long: `Fetch all sources, report changed skills and move the clones forward.
+
+Each clone fetches from its source's url, with the config's git_protocol
+applied, and missing clones are created.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := open()
 			if err != nil {

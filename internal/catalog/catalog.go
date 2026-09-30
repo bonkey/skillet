@@ -67,7 +67,11 @@ type Catalog struct {
 	// placeholders. Only the local catalog's list is used; an included
 	// catalog never chooses where secrets come from.
 	Secrets []SecretItem `toml:"secrets,omitempty"`
-	Agents  []string     `toml:"agents"`
+	// GitProtocol is "ssh" to clone GitHub and GitLab https URLs over SSH;
+	// empty or "https" clones them as written. Only the local catalog and
+	// its overlay set it.
+	GitProtocol string   `toml:"git_protocol,omitempty"`
+	Agents      []string `toml:"agents"`
 	// Sources, MCPs and Packs are keyed by the effective name of each
 	// entry. The file holds them as arrays of tables; see fileCatalog.
 	Sources map[string]*Source `toml:"-"`
@@ -99,15 +103,16 @@ func New() *Catalog {
 // each with a name, sources under [[skills]] and servers under [[mcps]],
 // each named by an optional key.
 type fileCatalog struct {
-	Gist     string        `toml:"gist,omitempty"`
-	Includes []string      `toml:"includes,omitempty"`
-	Secrets  []SecretItem  `toml:"secrets,omitempty"`
-	Agents   []string      `toml:"agents"`
-	Packs    []*filePack   `toml:"packs,omitempty"`
-	Skills   []*fileSource `toml:"skills,omitempty"`
-	MCPs     []*MCP        `toml:"mcps,omitempty"`
-	Enabled  []string      `toml:"enabled,omitempty"`
-	Disabled []string      `toml:"disabled,omitempty"`
+	Gist        string        `toml:"gist,omitempty"`
+	Includes    []string      `toml:"includes,omitempty"`
+	Secrets     []SecretItem  `toml:"secrets,omitempty"`
+	GitProtocol string        `toml:"git_protocol,omitempty"`
+	Agents      []string      `toml:"agents"`
+	Packs       []*filePack   `toml:"packs,omitempty"`
+	Skills      []*fileSource `toml:"skills,omitempty"`
+	MCPs        []*MCP        `toml:"mcps,omitempty"`
+	Enabled     []string      `toml:"enabled,omitempty"`
+	Disabled    []string      `toml:"disabled,omitempty"`
 }
 
 // filePack is a [[packs]] entry: a pack with the name it goes by.
@@ -232,7 +237,10 @@ func parse(data []byte, overlay bool) (*Catalog, error) {
 		return nil, err
 	}
 	c := New()
-	c.Gist, c.Includes, c.Secrets = f.Gist, f.Includes, f.Secrets
+	c.Gist, c.Includes, c.Secrets, c.GitProtocol = f.Gist, f.Includes, f.Secrets, f.GitProtocol
+	if f.GitProtocol != "" && f.GitProtocol != "https" && f.GitProtocol != "ssh" {
+		return nil, fmt.Errorf("git_protocol is %q; use \"https\" or \"ssh\"", f.GitProtocol)
+	}
 	if f.Agents != nil {
 		c.Agents = f.Agents
 	}
@@ -288,7 +296,7 @@ func parse(data []byte, overlay bool) (*Catalog, error) {
 // Encode renders the catalog as its file, packs, sources and servers sorted
 // by name.
 func (c *Catalog) Encode() ([]byte, error) {
-	f := fileCatalog{Gist: c.Gist, Includes: c.Includes, Secrets: c.Secrets, Agents: c.Agents}
+	f := fileCatalog{Gist: c.Gist, Includes: c.Includes, Secrets: c.Secrets, GitProtocol: c.GitProtocol, Agents: c.Agents}
 	for _, name := range c.PackNames() {
 		f.Packs = append(f.Packs, &filePack{Name: name, Pack: *c.Packs[name]})
 	}
@@ -811,7 +819,8 @@ func Merge(local *Catalog, ids []string, included []*Catalog) (*Catalog, error) 
 
 // Overlay returns base with the entries of over: a same-named source,
 // server or pack replaces the one in base, the others are added, the
-// secrets are appended, and agents are taken when over lists them.
+// secrets are appended, and agents and git_protocol are taken when over
+// sets them.
 func Overlay(base, over *Catalog) (*Catalog, error) {
 	data, err := base.Encode()
 	if err != nil {
@@ -837,6 +846,9 @@ func Overlay(base, over *Catalog) (*Catalog, error) {
 	c.Secrets = append(c.Secrets, over.Secrets...)
 	if over.Agents != nil {
 		c.Agents = over.Agents
+	}
+	if over.GitProtocol != "" {
+		c.GitProtocol = over.GitProtocol
 	}
 	return c, nil
 }

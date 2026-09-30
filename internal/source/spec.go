@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/bonkey/skillet/internal/catalog"
 )
 
 // Spec is a skill source written the way the `skills` npm CLI takes it.
@@ -125,4 +127,19 @@ func repoKey(url string) string {
 	}
 	key = strings.ReplaceAll(key, ":", "/")
 	return strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(key, "/"), ".git"), "/")
+}
+
+var sshHosts = regexp.MustCompile(`^https?://(?:www\.)?(github\.com|gitlab\.com)/(.+?)(?:\.git)?/?$`)
+
+// CloneURL is the URL git clones and fetches a source from. With protocol
+// "ssh", a GitHub or GitLab https URL becomes its SSH form, such as
+// git@github.com:owner/repo.git; other URLs and protocols keep url as it is.
+func CloneURL(url, protocol string) string {
+	if protocol != "ssh" || catalog.IsSkillFile(url) {
+		return url
+	}
+	if m := sshHosts.FindStringSubmatch(url); m != nil {
+		return "git@" + m[1] + ":" + m[2] + ".git"
+	}
+	return url
 }

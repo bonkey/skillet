@@ -82,3 +82,24 @@ func TestSameRepo(t *testing.T) {
 		t.Error("different repositories")
 	}
 }
+
+func TestCloneURL(t *testing.T) {
+	ssh := map[string]string{
+		"https://github.com/bonkey/skills-private.git":        "git@github.com:bonkey/skills-private.git",
+		"https://www.github.com/bonkey/skills/":               "git@github.com:bonkey/skills.git",
+		"http://gitlab.com/group/sub/repo":                    "git@gitlab.com:group/sub/repo.git",
+		"git@github.com:bonkey/skills.git":                    "git@github.com:bonkey/skills.git",
+		"https://git.example.com/acme/skills.git":             "https://git.example.com/acme/skills.git",
+		"https://github.com/bonkey/skills/blob/main/SKILL.md": "https://github.com/bonkey/skills/blob/main/SKILL.md",
+	}
+	for in, want := range ssh {
+		if got := CloneURL(in, "ssh"); got != want {
+			t.Errorf("CloneURL(%q, ssh) = %q, want %q", in, got, want)
+		}
+	}
+	for _, protocol := range []string{"", "https"} {
+		if got := CloneURL("https://github.com/bonkey/skills.git", protocol); got != "https://github.com/bonkey/skills.git" {
+			t.Errorf("CloneURL with %q = %q", protocol, got)
+		}
+	}
+}

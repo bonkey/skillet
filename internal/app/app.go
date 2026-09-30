@@ -51,6 +51,9 @@ type App struct {
 	Warnings []string   // problems with included gists
 	// pendingSecrets holds values an import found before they are saved.
 	pendingSecrets secrets.Store
+	// cloneFailed names the sources whose clone failed; sync does not try
+	// them again, so syncing two scopes reports a failure once.
+	cloneFailed map[string]bool
 }
 
 func Open(p paths.Paths) (*App, error) { return OpenWith(p, gist.GH{}) }
@@ -318,7 +321,7 @@ func (a *App) Sync(scope Scope, opt SyncOptions) (SyncReport, error) {
 func (a *App) cloneMissing() (failed []string, err error) {
 	var missing []string
 	for _, name := range a.SourceNames() {
-		if _, err := os.Stat(a.Paths.RepoDir(name)); os.IsNotExist(err) {
+		if _, err := os.Stat(a.Paths.RepoDir(name)); os.IsNotExist(err) && !a.cloneFailed[name] {
 			missing = append(missing, name)
 		}
 	}
@@ -328,10 +331,14 @@ func (a *App) cloneMissing() (failed []string, err error) {
 	errs := make([]error, len(missing))
 	parallel(len(missing), func(i int) {
 		src := a.Catalog.Sources[missing[i]]
-		errs[i] = source.Clone(src.URL, src.Ref, a.Paths.RepoDir(missing[i]))
+		errs[i] = source.Clone(a.cloneURL(src.URL), src.Ref, a.Paths.RepoDir(missing[i]))
 	})
 	for i, err := range errs {
 		if err != nil {
+			if a.cloneFailed == nil {
+				a.cloneFailed = map[string]bool{}
+			}
+			a.cloneFailed[missing[i]] = true
 			failed = append(failed, fmt.Sprintf("%s could not be cloned: %v", missing[i], err))
 		}
 	}
@@ -795,7 +802,7 @@ func (a *App) Update(check bool) ([]SourceUpdate, error) {
 func (a *App) updateSource(name string, check bool) SourceUpdate {
 	update := SourceUpdate{Source: name}
 	src, dir := a.Catalog.Sources[name], a.Paths.RepoDir(name)
-	cloned, err := fetchLatest(src.URL, src.Ref, dir, true)
+	cloned, err := fetchLatest(a.cloneURL(src.URL), src.Ref, dir, true)
 	if cloned || err != nil {
 		update.Cloned, update.Err = cloned, err
 		return update
@@ -805,11 +812,11 @@ func (a *App) updateSource(name string, check bool) SourceUpdate {
 		update.Err = err
 		return update
 	}
-	// The URL of a SKILL.md names its version: a URL changed by hand is fetched.
-	if catalog.IsSkillFile(src.URL) {
-		if update.Err = source.SetOrigin(dir, src.URL); update.Err != nil {
-			return update
-		}
+	// The clone fetches from the URL the catalog names, with git_protocol
+	// applied: a URL or protocol changed by hand is fetched. The URL of a
+	// SKILL.md names its version.
+	if update.Err = source.SetOrigin(dir, a.cloneURL(src.URL)); update.Err != nil {
+		return update
 	}
 	latest, err := source.Fetch(dir, src.Ref)
 	if err != nil || latest == old {
@@ -831,6 +838,9 @@ func (a *App) updateSource(name string, check bool) SourceUpdate {
 	}
 	return update
 }
+
+// cloneURL is the URL git clones and fetches a source's url from.
+func (a *App) cloneURL(url string) string { return source.CloneURL(url, a.Catalog.GitProtocol) }
 
 // fetchLatest clones a source that has no clone yet. With an existing clone
 // it does nothing when keep is set, and otherwise moves it to the latest

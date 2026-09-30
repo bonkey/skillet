@@ -70,7 +70,7 @@ func (a *App) Import(lockFile string, dryRun bool) (ImportReport, error) {
 	failed := make([]error, len(sources))
 	parallel(len(sources), func(i int) {
 		first := bySource[sources[i]][0]
-		_, failed[i] = fetchLatest(first.URL, first.Ref, a.Paths.RepoDir(names[i]), false)
+		_, failed[i] = fetchLatest(a.cloneURL(first.URL), first.Ref, a.Paths.RepoDir(names[i]), false)
 	})
 
 	for i, name := range sources {

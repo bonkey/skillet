@@ -177,6 +177,7 @@ skills elsewhere, and to enable and disable what they find.
 
 ```toml
 agents = ["claude-code", "codex", "zed"]
+git_protocol = "ssh"                           # optional: clone GitHub and GitLab sources over SSH
 
 [[packs]]
 name = "craft"
@@ -223,6 +224,12 @@ item = "klmnopqrst"
   `update` moves a branch `ref` forward; a tag or a commit keeps the version you evaluated.
   `path` takes the skills from that directory of the repository and ignores the rest; two
   entries of one repository with different paths need distinct `name`s.
+  A private repository needs a `url` git can authenticate to: an SSH URL such as
+  `git@github.com:owner/repo.git`, or `git_protocol = "ssh"`, which clones and fetches every
+  `https://github.com/…` and `https://gitlab.com/…` source as `git@<host>:owner/repo.git` while the file
+  keeps its URLs; the default, `"https"`, uses them as written. `update` points existing clones
+  at the URL in effect. Set it in `config.local.toml` to clone over SSH on one machine only; the
+  `git_protocol` of an included gist or a project is ignored.
   A `url` of a `.md` file over http(s) is a single `SKILL.md`, which needs a `name` and takes no
   `ref` or `path`; `update` downloads it again.
   `enabled = false` switches a source off; an `only` entry written `{ name = "x", enabled = false }`
@@ -261,8 +268,9 @@ item = "klmnopqrst"
 
 `~/.config/skillet/config.local.toml`, when present, overrides `config.toml` on this machine. It
 takes the same entries, and a same-named source, server or pack replaces the one in `config.toml`;
-`agents` replaces the list and `secrets` are added. Two more keys switch entries of either file on
-or off by the names the commands take; `disabled` wins over `enabled`:
+`agents` and `git_protocol` replace those of `config.toml` and `secrets` are added. Two more keys
+switch entries of either file on or off by the names the commands take; `disabled` wins over
+`enabled`:
 
 ```toml
 enabled = ["@experiments", "top-design"]
