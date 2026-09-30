@@ -54,6 +54,25 @@ func TestSourceNames(t *testing.T) {
 	if _, err := sourceNames([]*Source{{URL: "nowhere"}}); err == nil || !strings.Contains(err.Error(), "set name") {
 		t.Errorf("a url without a repository name is an error: %v", err)
 	}
+	if _, err := sourceNames([]*Source{{URL: "https://unpkg.com/@pen.dev/cli@0.3.9/SKILL.md"}}); err == nil || !strings.Contains(err.Error(), "set name") {
+		t.Errorf("a SKILL.md URL needs a name: %v", err)
+	}
+}
+
+func TestIsSkillFile(t *testing.T) {
+	for url, want := range map[string]bool{
+		"https://unpkg.com/@pen.dev/cli@0.3.9/SKILL.md":                   true,
+		"http://example.com/skills/Skill.MD?download=1":                   true,
+		"https://raw.githubusercontent.com/acme/skills/main/pdf/SKILL.md": true,
+		"https://github.com/acme/skills.git":                              false,
+		"git@github.com:acme/README.md":                                   false,
+		"/home/me/skills/SKILL.md":                                        false,
+		"https://mcp.exa.ai/mcp":                                          false,
+	} {
+		if got := IsSkillFile(url); got != want {
+			t.Errorf("IsSkillFile(%q) = %v", url, got)
+		}
+	}
 }
 
 func TestMCPNames(t *testing.T) {

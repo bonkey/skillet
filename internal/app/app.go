@@ -805,6 +805,12 @@ func (a *App) updateSource(name string, check bool) SourceUpdate {
 		update.Err = err
 		return update
 	}
+	// The URL of a SKILL.md names its version: a URL changed by hand is fetched.
+	if catalog.IsSkillFile(src.URL) {
+		if update.Err = source.SetOrigin(dir, src.URL); update.Err != nil {
+			return update
+		}
+	}
 	latest, err := source.Fetch(dir, src.Ref)
 	if err != nil || latest == old {
 		update.Err = err

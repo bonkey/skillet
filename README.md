@@ -101,6 +101,7 @@ skillet import --dry-run                 # take over an existing `npx skills` in
 skillet import
 
 skillet add bonkey/skills --skill pr     # a source, or some of its skills; `sync` enables them
+skillet add https://unpkg.com/@pen.dev/cli@0.3.9/SKILL.md   # one free-standing SKILL.md
 skillet add -- npx skills add bonkey/skills -g --skill captains-log -y   # a pasted `npx skills` command
 skillet add https://mcp.exa.ai/mcp       # a server: a URL that is no git repository
 skillet add -- npx @mobilenext/mobile-mcp@latest   # a server's command
@@ -149,7 +150,9 @@ on.
 
 `add` takes a source as `npx skills add` does (`owner/repo`, `owner/repo@skill`,
 `owner/repo/path`, GitHub and GitLab URLs, git URLs and local paths, with an optional `#ref`), or a
-whole `npx skills add` command after `--`, of which `--skill` and `--all` count. It clones the
+whole `npx skills add` command after `--`, of which `--skill` and `--all` count. An http(s) URL
+of a `.md` file is one free-standing `SKILL.md`: the source is named after its skill, and adding
+another URL for that skill, such as a newer version, replaces the URL. It clones the
 source to check the skills and appends the entry to `config.toml`, or with `-p` to the project's
 `.skillet.toml`, where an existing entry changes only its `only` list. Comments stay: a list that
 holds comments is left for you to change. It links nothing. A URL where git finds no repository
@@ -220,6 +223,8 @@ item = "klmnopqrst"
   `update` moves a branch `ref` forward; a tag or a commit keeps the version you evaluated.
   `path` takes the skills from that directory of the repository and ignores the rest; two
   entries of one repository with different paths need distinct `name`s.
+  A `url` of a `.md` file over http(s) is a single `SKILL.md`, which needs a `name` and takes no
+  `ref` or `path`; `update` downloads it again.
   `enabled = false` switches a source off; an `only` entry written `{ name = "x", enabled = false }`
   switches one skill off, also in a source that takes all. A list keeps at least one skill on,
   since a list without one takes all: switch the source off instead. Skills are written `name` or
@@ -273,7 +278,8 @@ is refused, since the local file would win: change it there.
 
 ## How it works
 
-- Each source is shallow-cloned into `~/.local/share/skillet/repos/<name>`.
+- Each source is shallow-cloned into `~/.local/share/skillet/repos/<name>`. A `SKILL.md` URL gets
+  a local repository there instead, with one commit per version of the file skillet downloaded.
 - An enabled skill is a symlink in every agent directory, such as `~/.claude/skills/<name>` or a
   project's `.agents/skills/<name>`, that points straight into the clone with an absolute path. The
   whole skill folder is linked, and enabling or disabling works offline. An enabled server is an

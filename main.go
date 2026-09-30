@@ -497,7 +497,9 @@ func addCmd() *cobra.Command {
 A source is written as ` + "`npx skills add`" + ` takes it: owner/repo, owner/repo@skill,
 owner/repo/path, a GitHub or GitLab URL, a git URL or a local path, each
 with an optional #ref. Without --skill the source takes every skill it
-offers, also those it gains later. A ` + "`skills add`" + ` command may follow --: its
+offers, also those it gains later. An http(s) URL of a .md file is one
+free-standing SKILL.md, named after its skill; adding another URL for that
+skill replaces the URL, which is how a pinned version moves on. A ` + "`skills add`" + ` command may follow --: its
 --skill and --all count, its other options are ignored.
 
 A URL that is not a git repository is an MCP server when one answers there,
@@ -512,6 +514,7 @@ comments and layout of the file stay; a list that holds comments is left
 for you to change.
 
   skillet add bonkey/skills --skill captains-log
+  skillet add https://unpkg.com/@pen.dev/cli@0.3.9/SKILL.md
   skillet add -- npx skills add bonkey/skills -g --skill captains-log -y
   skillet add https://mcp.exa.ai/mcp
   skillet add -- npx @mobilenext/mobile-mcp@latest`,
@@ -554,7 +557,10 @@ for you to change.
 			if len(report.Secrets) > 0 {
 				fmt.Printf("secrets  %s: values kept in %s\n", strings.Join(report.Secrets, ", "), tilde(a.Paths.SecretsFile()))
 			}
-			if report.File != "" {
+			if len(report.Updated) > 0 {
+				fmt.Printf("updated  %s to the new URL in %s\n", strings.Join(report.Updated, ", "), tilde(report.File))
+			}
+			if len(report.Added) > 0 {
 				fmt.Printf("added    %s to %s; `skillet sync` enables it\n", strings.Join(report.Added, ", "), tilde(report.File))
 			}
 			return nil
@@ -1000,7 +1006,9 @@ func sourcesCmd() *cobra.Command {
 			}
 			for _, src := range a.Sources() {
 				ref, commit := src.Ref, short(src.Commit)
-				if ref == "" {
+				if catalog.IsSkillFile(src.URL) {
+					ref = "(SKILL.md URL)"
+				} else if ref == "" {
 					ref = "(default branch)"
 				}
 				if commit == "" {

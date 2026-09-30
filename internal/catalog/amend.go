@@ -14,9 +14,9 @@ import (
 )
 
 // Amend saves the catalog into file and keeps the file's text: sources and
-// servers the file lacks are appended, and a source's changed `only` list is
-// replaced where it stands, so comments and layout stay. A file that does
-// not exist yet is written whole. The result goes to a temporary file first
+// servers the file lacks are appended, and a source's changed `url` and
+// `only` list are replaced where they stand, so comments and layout stay. A
+// file that does not exist yet is written whole. The result goes to a temporary file first
 // and replaces file only when it reads back as c; a change of anything else
 // is refused and leaves file as it is.
 func (c *Catalog) Amend(file string) error {
@@ -73,11 +73,11 @@ func (c *Catalog) amend(data []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	onlys, err := onlyRanges(data)
+	ranges, err := entryRanges(data)
 	if err != nil {
 		return nil, err
 	}
-	if len(onlys) != len(sources) {
+	if len(ranges) != len(sources) {
 		return nil, errors.New("sources written other than as [[skills]] entries cannot be amended")
 	}
 
@@ -96,31 +96,45 @@ func (c *Catalog) amend(data []byte) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		start, end := int(onlys[i].Offset), int(onlys[i].Offset+onlys[i].Length)
-		if old == changed || onlys[i].Length == 0 {
-			continue
+		var edits []edit // within the entry, applied from the last one
+		if want.URL != sources[i].URL {
+			line, err := toml.Marshal(struct {
+				URL string `toml:"url"`
+			}{want.URL})
+			if err != nil {
+				return nil, err
+			}
+			r := ranges[i].url
+			edits = append(edits, edit{int(r.Offset), int(r.Offset + r.Length), strings.TrimSuffix(string(line), "\n")})
 		}
-		// Skill names hold no #, so one in the list starts a comment.
-		if bytes.IndexByte(out[start:end], '#') >= 0 {
-			edit := "change it by hand to " + changed
+		only := ranges[i].only
+		if start, end := int(only.Offset), int(only.Offset+only.Length); old != changed && only.Length > 0 {
+			// Skill names hold no #, so one in the list starts a comment.
+			if bytes.IndexByte(out[start:end], '#') >= 0 {
+				edit := "change it by hand to " + changed
+				if changed == "" {
+					edit = "remove it by hand, so that the source takes every skill"
+				}
+				return nil, fmt.Errorf("the only list of %s%s holds comments, which a rewrite would lose; %s", SourcePrefix, names[i], edit)
+			}
 			if changed == "" {
-				edit = "remove it by hand, so that the source takes every skill"
+				// A comment that trails the list keeps its line; else the line goes.
+				lineEnd := len(out)
+				if next := bytes.IndexByte(out[end:], '\n'); next >= 0 {
+					lineEnd = end + next + 1
+				}
+				if rest := bytes.TrimLeft(out[end:lineEnd], " \t"); len(rest) > 0 && rest[0] == '#' {
+					end += len(out[end:lineEnd]) - len(rest)
+				} else {
+					start, end = bytes.LastIndexByte(out[:start], '\n')+1, lineEnd
+				}
 			}
-			return nil, fmt.Errorf("the only list of %s%s holds comments, which a rewrite would lose; %s", SourcePrefix, names[i], edit)
+			edits = append(edits, edit{start, end, changed})
 		}
-		if changed == "" {
-			// A comment that trails the list keeps its line; else the line goes.
-			lineEnd := len(out)
-			if next := bytes.IndexByte(out[end:], '\n'); next >= 0 {
-				lineEnd = end + next + 1
-			}
-			if rest := bytes.TrimLeft(out[end:lineEnd], " \t"); len(rest) > 0 && rest[0] == '#' {
-				end += len(out[end:lineEnd]) - len(rest)
-			} else {
-				start, end = bytes.LastIndexByte(out[:start], '\n')+1, lineEnd
-			}
+		slices.SortFunc(edits, func(a, b edit) int { return b.start - a.start })
+		for _, e := range edits {
+			out = slices.Concat(out[:e.start], []byte(e.text), out[e.end:])
 		}
-		out = slices.Concat(out[:start], []byte(changed), out[end:])
 	}
 
 	known := map[string]bool{}
@@ -172,12 +186,19 @@ func renderOnly(only []any) (string, error) {
 	return strings.TrimSuffix(string(tidy(line)), "\n"), err
 }
 
-// onlyRanges finds, for every [[skills]] entry in order, where its `only`
-// key and value stand; the range is empty for an entry without one.
-func onlyRanges(data []byte) ([]unstable.Range, error) {
+type edit struct {
+	start, end int
+	text       string
+}
+
+type entryRange struct{ url, only unstable.Range }
+
+// entryRanges finds, for every [[skills]] entry in order, where its `url`
+// and `only` keys and values stand; a range is empty for a missing key.
+func entryRanges(data []byte) ([]entryRange, error) {
 	var p unstable.Parser
 	p.Reset(data)
-	var ranges []unstable.Range
+	var ranges []entryRange
 	inSkills := false
 	for p.NextExpression() {
 		expr := p.Expression()
@@ -185,11 +206,17 @@ func onlyRanges(data []byte) ([]unstable.Range, error) {
 		case unstable.Table, unstable.ArrayTable:
 			inSkills = expr.Kind == unstable.ArrayTable && keyOf(expr) == "skills"
 			if inSkills {
-				ranges = append(ranges, unstable.Range{})
+				ranges = append(ranges, entryRange{})
 			}
 		case unstable.KeyValue:
-			if inSkills && keyOf(expr) == "only" {
-				ranges[len(ranges)-1] = expr.Raw
+			if !inSkills {
+				break
+			}
+			switch keyOf(expr) {
+			case "url":
+				ranges[len(ranges)-1].url = expr.Raw
+			case "only":
+				ranges[len(ranges)-1].only = expr.Raw
 			}
 		}
 	}

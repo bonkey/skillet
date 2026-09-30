@@ -77,6 +77,19 @@ func TestSourcePath(t *testing.T) {
 	}
 }
 
+func TestSkillFileSourceTakesNoRefOrPath(t *testing.T) {
+	c, err := Parse([]byte("[[skills]]\nname = 'pen-design'\nurl = 'https://unpkg.com/@pen.dev/cli@0.3.9/SKILL.md'\n"))
+	if err != nil || c.Sources["pen-design"] == nil {
+		t.Fatalf("a named SKILL.md source: %v", err)
+	}
+	for _, key := range []string{"ref = 'main'", "path = 'x'"} {
+		_, err := Parse([]byte("[[skills]]\nname = 'pen-design'\nurl = 'https://unpkg.com/@pen.dev/cli@0.3.9/SKILL.md'\n" + key + "\n"))
+		if err == nil || !strings.Contains(err.Error(), "no ref or path") {
+			t.Errorf("%s accepted: %v", key, err)
+		}
+	}
+}
+
 func TestResolve(t *testing.T) {
 	c := sample()
 	tests := []struct {

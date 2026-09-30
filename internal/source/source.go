@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -40,10 +41,13 @@ func ParseName(arg string) (name, url string, err error) {
 	return "", "", fmt.Errorf("%q is neither owner/repo nor a git URL", arg)
 }
 
-func git(dir string, args ...string) (string, error) {
+func git(dir string, args ...string) (string, error) { return run(dir, nil, args...) }
+
+func run(dir string, stdin io.Reader, args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd.Stdin = stdin
+	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), commitEnv...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
@@ -53,16 +57,18 @@ func git(dir string, args ...string) (string, error) {
 }
 
 // Clone makes a shallow clone of url at ref: a branch, a tag, a full commit
-// hash, or the default branch when empty.
+// hash, or the default branch when empty. A SKILL.md URL (see
+// catalog.IsSkillFile) becomes a local repository that holds the file.
 func Clone(url, ref, dir string) error {
 	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
 		return err
 	}
-	if ref == "" {
+	if ref == "" && !catalog.IsSkillFile(url) {
 		_, err := git("", "clone", "-q", "--depth", "1", url, dir)
 		return err
 	}
-	// A fetch accepts a commit hash; `clone --branch` takes only branches and tags.
+	// A fetch accepts a commit hash; `clone --branch` takes only branches and
+	// tags. The clone of a SKILL.md URL is made by Fetch.
 	err := func() error {
 		if _, err := git("", "init", "-q", dir); err != nil {
 			return err
@@ -85,8 +91,12 @@ func Clone(url, ref, dir string) error {
 func Head(dir string) (string, error) { return git(dir, "rev-parse", "HEAD") }
 
 // Fetch downloads the latest upstream commit without touching the work tree
-// and returns its hash.
+// and returns its hash. For a clone of a SKILL.md URL, it downloads the file
+// and commits it when it changed.
 func Fetch(dir, ref string) (string, error) {
+	if origin, err := git(dir, "remote", "get-url", "origin"); err == nil && catalog.IsSkillFile(origin) {
+		return fetchFile(dir, origin)
+	}
 	if ref == "" {
 		ref = "HEAD"
 	}

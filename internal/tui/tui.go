@@ -753,7 +753,9 @@ func (m *Model) source(name string) string {
 			continue
 		}
 		ref, commit := src.Ref, src.Commit
-		if ref == "" {
+		if catalog.IsSkillFile(src.URL) {
+			ref = "SKILL.md URL"
+		} else if ref == "" {
 			ref = "default branch"
 		}
 		if len(commit) > 8 {

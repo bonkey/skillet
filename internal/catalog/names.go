@@ -21,6 +21,14 @@ func RepoParts(rawURL string) (owner, repo string, ok bool) {
 	return m[1], m[2], true
 }
 
+// IsSkillFile tells whether a source URL names a single SKILL.md on a web
+// server rather than a git repository: an http(s) URL whose path ends in .md.
+func IsSkillFile(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") &&
+		strings.HasSuffix(strings.ToLower(u.Path), ".md")
+}
+
 // sourceNames gives every source its name: the explicit one, else the
 // repository name from the URL, or "owner-repo" for every source without
 // a name whose repository name another one shares. The result does not
@@ -34,7 +42,7 @@ func sourceNames(sources []*Source) ([]string, error) {
 			continue
 		}
 		owner, repo, ok := RepoParts(src.URL)
-		if !ok {
+		if !ok || IsSkillFile(src.URL) {
 			return nil, fmt.Errorf("source %q: no name found in the url; set name", src.URL)
 		}
 		names[i], owners[i] = repo, owner

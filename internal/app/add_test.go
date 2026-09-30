@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/bonkey/skillet/internal/paths"
@@ -253,5 +254,80 @@ func TestAddRefusesWhatTheLocalFileDefines(t *testing.T) {
 	e.open(t, "agents = ['claude-code']\n")
 	if _, err := e.app.Add(e.app.Global(), AddRequest{Command: []string{"npx", "mobile-mcp"}}); err == nil || !strings.Contains(err.Error(), "config.local.toml") {
 		t.Fatalf("err: %v", err)
+	}
+}
+
+// skillFiles serves SKILL.md files by path; set changes one.
+func skillFiles(t *testing.T) (base string, set func(path, description string)) {
+	t.Helper()
+	var mu sync.Mutex
+	files := map[string]string{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		body, ok := files[r.URL.Path]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		io.WriteString(w, body)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL, func(path, description string) {
+		mu.Lock()
+		defer mu.Unlock()
+		files[path] = "---\nname: pen-design\ndescription: " + description + "\n---\n"
+	}
+}
+
+func TestAddAndUpdateASkillFile(t *testing.T) {
+	e := setup(t)
+	base, set := skillFiles(t)
+	set("/cli@1/SKILL.md", "Version one")
+	set("/cli@2/SKILL.md", "Version two")
+	description := func() string {
+		found, _ := e.app.Index.Lookup(e.app.Catalog, "pen-design")
+		return found.Description
+	}
+
+	report, err := e.app.Add(e.app.Global(), AddRequest{Arg: base + "/cli@1/SKILL.md"})
+	if err != nil || !reflect.DeepEqual(report.Added, []string{"skills:pen-design"}) {
+		t.Fatalf("report: %+v, %v", report, err)
+	}
+	if got := read(t, e.p.ConfigFile()); !strings.Contains(got, "name = 'pen-design'\nurl = '"+base+"/cli@1/SKILL.md'\n") {
+		t.Fatalf("config:\n%s", got)
+	}
+	if description() != "Version one" {
+		t.Fatalf("indexed: %q", description())
+	}
+
+	report, err = e.app.Add(e.app.Global(), AddRequest{Arg: base + "/cli@2/SKILL.md"})
+	if err != nil || len(report.Added) > 0 || !reflect.DeepEqual(report.Updated, []string{"skills:pen-design"}) {
+		t.Fatalf("another URL of the skill: %+v, %v", report, err)
+	}
+	if got := read(t, e.p.ConfigFile()); !strings.Contains(got, "url = '"+base+"/cli@2/SKILL.md'\n") || strings.Contains(got, "cli@1") {
+		t.Fatalf("config:\n%s", got)
+	}
+	if description() != "Version two" {
+		t.Fatalf("the clone holds the new version: %q", description())
+	}
+
+	set("/cli@2/SKILL.md", "Version two, fixed")
+	updates, err := e.app.Update(false)
+	if err != nil || len(updates) != 1 || !reflect.DeepEqual(updates[0].Changed, []string{"pen-design"}) {
+		t.Fatalf("update: %+v, %v", updates, err)
+	}
+	if description() != "Version two, fixed" {
+		t.Fatalf("after update: %q", description())
+	}
+
+	// A URL changed by hand is fetched by update.
+	config := strings.Replace(read(t, e.p.ConfigFile()), "cli@2", "cli@1", 1)
+	write(t, e.p.ConfigFile(), config)
+	if e.app, err = Open(e.p); err != nil {
+		t.Fatal(err)
+	}
+	if updates, err = e.app.Update(false); err != nil || !reflect.DeepEqual(updates[0].Changed, []string{"pen-design"}) || description() != "Version one" {
+		t.Fatalf("update after a hand edit: %+v, %v, %q", updates, err, description())
 	}
 }

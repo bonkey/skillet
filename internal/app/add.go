@@ -31,6 +31,7 @@ type AddRequest struct {
 type AddReport struct {
 	File    string   // the config file written; empty when nothing changed
 	Added   []string // what the config file holds now
+	Updated []string // sources of a SKILL.md URL that now read another URL
 	Present []string // what the catalog held already
 	Secrets []string // placeholders whose values went into secrets.toml
 	Notes   []string
@@ -62,7 +63,7 @@ func (a *App) Add(scope Scope, req AddRequest) (AddReport, error) {
 			if err != nil {
 				return report, err
 			}
-			if !spec.Repo && !source.IsRepo(spec.URL) {
+			if !spec.Repo && !catalog.IsSkillFile(spec.URL) && !source.IsRepo(spec.URL) {
 				return report, fmt.Errorf("%s is not a git repository", arg)
 			}
 			specs = append(specs, spec)
@@ -75,7 +76,7 @@ func (a *App) Add(scope Scope, req AddRequest) (AddReport, error) {
 		}
 		web := strings.HasPrefix(req.Arg, "http://") || strings.HasPrefix(req.Arg, "https://")
 		switch {
-		case spec.Repo || source.IsRepo(spec.URL):
+		case spec.Repo || catalog.IsSkillFile(spec.URL) || source.IsRepo(spec.URL):
 			specs = append(specs, spec)
 		case !web:
 			return report, fmt.Errorf("%s is not a git repository", req.Arg)
@@ -110,7 +111,7 @@ func (a *App) Add(scope Scope, req AddRequest) (AddReport, error) {
 			return fail(err)
 		}
 	}
-	if len(report.Added) == 0 {
+	if len(report.Added)+len(report.Updated) == 0 {
 		return report, nil
 	}
 	err := target.Amend(file)
@@ -132,6 +133,9 @@ func (a *App) Add(scope Scope, req AddRequest) (AddReport, error) {
 // source offers: one the catalog has, or else a new one, which becomes the
 // source's clone. A path to one skill folder takes that skill from the whole
 // repository; a path to a directory of skills becomes the source's path.
+// The source of a SKILL.md URL is named after its skill; a new URL for a
+// skill that the config file takes from another SKILL.md URL replaces that
+// URL.
 func (a *App) addSource(scope Scope, target *catalog.Catalog, spec source.Spec, skills []string, report *AddReport) error {
 	dir := ""
 	for _, name := range a.SourceNames() {
@@ -204,11 +208,24 @@ func (a *App) addSource(scope Scope, target *catalog.Catalog, spec source.Spec, 
 			name, src = n, s
 		}
 	}
+	file, replaced := catalog.IsSkillFile(spec.URL), false
+	if file && src == nil {
+		name = sortedKeys(offered)[0]
+		if s, ok := target.Sources[name]; ok && catalog.IsSkillFile(s.URL) {
+			src, replaced = s, true
+			src.URL = spec.URL
+			report.Updated = append(report.Updated, catalog.SourcePrefix+name)
+		}
+	}
 	var added, present []string // skill names; "" stands for the whole source
 	whole := []string{""}
 	switch {
+	case replaced:
 	case src == nil:
 		src = &catalog.Source{URL: spec.URL, Ref: spec.Ref, Path: sub, Skills: skills}
+		if file {
+			src.Name = name
+		}
 		if err := a.nameSource(target, src); err != nil {
 			return err
 		}
@@ -253,6 +270,12 @@ func (a *App) addSource(scope Scope, target *catalog.Catalog, spec source.Spec, 
 			catalog.SourcePrefix, name))
 	}
 	clone := a.Paths.RepoDir(name)
+	if replaced {
+		// The fresh clone of the new URL takes its place, or else sync clones it.
+		if err := os.RemoveAll(clone); err != nil {
+			return err
+		}
+	}
 	if _, err := os.Stat(clone); os.IsNotExist(err) && fresh {
 		if err := os.MkdirAll(a.Paths.ReposDir(), 0o755); err != nil {
 			return err
@@ -268,10 +291,11 @@ func (a *App) addSource(scope Scope, target *catalog.Catalog, spec source.Spec, 
 // nameSource gives a new source the name "owner-repo" when its repository
 // name is taken, so that it renames no other source. The name of a source
 // of the same repository and path elsewhere in the catalog is free: the
-// config file's entry overrides that one.
+// config file's entry overrides that one. The source of a SKILL.md URL
+// keeps the name of its skill, which must be free.
 func (a *App) nameSource(target *catalog.Catalog, src *catalog.Source) error {
 	owner, repo, ok := catalog.RepoParts(src.URL)
-	if !ok {
+	if !ok && !catalog.IsSkillFile(src.URL) {
 		return fmt.Errorf("source %q: no name found in the url", src.URL)
 	}
 	taken := func(name string) bool {
@@ -286,7 +310,9 @@ func (a *App) nameSource(target *catalog.Catalog, src *catalog.Source) error {
 		return false
 	}
 	names := []string{repo, owner + "-" + repo}
-	if src.Path != "" {
+	if catalog.IsSkillFile(src.URL) {
+		names, repo = []string{src.Name}, src.Name
+	} else if src.Path != "" {
 		names = append(names, owner+"-"+repo+"-"+path.Base(src.Path))
 	}
 	for _, name := range names {

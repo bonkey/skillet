@@ -76,6 +76,18 @@ func TestAmendReplacesAChangedOnlyList(t *testing.T) {
 	}
 }
 
+func TestAmendReplacesAChangedURL(t *testing.T) {
+	got, err := amended(t, func(c *Catalog) {
+		c.Sources["wondel"].URL = "https://github.com/wondelai/agent-skills.git"
+		c.SetSkillFlag("wondel", "top-design", true)
+	})
+	want := strings.Replace(commented, "url = 'https://github.com/wondelai/skills.git'\nonly = ['clean-code']   # trailing",
+		"url = 'https://github.com/wondelai/agent-skills.git'\nonly = ['clean-code', 'top-design']   # trailing", 1)
+	if err != nil || got != want {
+		t.Fatalf("%v\n%s", err, got)
+	}
+}
+
 func TestAmendRemovesAnOnlyListThatTakesAll(t *testing.T) {
 	got, err := amended(t, func(c *Catalog) { c.Sources["wondel"].TakeAll() })
 	want := strings.Replace(commented, "only = ['clean-code']   # trailing\n", "# trailing\n", 1)

@@ -16,8 +16,9 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
-// Source is a git repository of skills. In the catalog it goes by its
-// name: the explicit one, or else the repository name from the URL.
+// Source is a git repository of skills, or the URL of a single SKILL.md
+// (see IsSkillFile). In the catalog it goes by its name: the explicit one,
+// or else the repository name from the URL; a SKILL.md URL needs a name.
 type Source struct {
 	// Name is the explicit name of the source; empty for a derived one.
 	Name string `toml:"name,omitempty"`
@@ -134,6 +135,9 @@ type onlyFlag struct {
 func (f *fileSource) source() (*Source, error) {
 	if !validPath(f.Path) {
 		return nil, fmt.Errorf("source %s: path %q must be a relative directory without empty or .. segments", f.URL, f.Path)
+	}
+	if IsSkillFile(f.URL) && (f.Ref != "" || f.Path != "") {
+		return nil, fmt.Errorf("source %s: a SKILL.md URL takes no ref or path", f.URL)
 	}
 	src := &Source{Name: f.Name, URL: f.URL, Ref: f.Ref, Path: f.Path, Enabled: f.Enabled}
 	for _, entry := range f.Only {
