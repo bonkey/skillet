@@ -489,6 +489,7 @@ func printMembership(cat *catalog.Catalog, report app.SyncReport) {
 func addCmd() *cobra.Command {
 	var skills []string
 	var name string
+	var syncAfter, toGist bool
 	cmd := &cobra.Command{
 		Use:   "add <owner/repo|url|path> | add -- <command>...",
 		Short: "Put a skill source or an MCP server into the catalog",
@@ -510,13 +511,16 @@ and a command after -- that is not ` + "`skills add`" + ` starts a server;
 ` + "`skillet add mcp`" + ` takes a server without checking. Values of URL parameters
 that look like secrets move to secrets.toml.
 
-add writes the config file only, the project's .skillet.toml with -p and
-config.toml otherwise; ` + "`skillet sync`" + ` enables what it added. New entries
-are appended and an existing entry changes only its "only" list, so the
-comments and layout of the file stay; a list that holds comments is left
-for you to change.
+add writes the config file, the project's .skillet.toml with -p and
+config.toml otherwise; ` + "`skillet sync`" + ` enables what it added, or --sync right
+away. New entries are appended and an existing entry changes only its
+"only" list, so the comments and layout of the file stay; a list that holds
+comments is left for you to change. --gist then uploads config.toml to its
+gist as ` + "`skillet gist push`" + ` does; without a gist it creates a secret one and
+writes its id into config.toml, which rewrites the file.
 
   skillet add bonkey/skills --skill captains-log
+  skillet add bonkey/skills --skill pr --sync --gist
   skillet add https://unpkg.com/@pen.dev/cli@0.3.9/SKILL.md
   skillet add -- npx skills add bonkey/skills -g --skill captains-log -y
   skillet add https://mcp.exa.ai/mcp
@@ -526,9 +530,14 @@ for you to change.
 	scope := scopeFlags(cmd)
 	cmd.Flags().StringSliceVarP(&skills, "skill", "s", nil, "take only these skills of the source (comma separated)")
 	cmd.Flags().StringVar(&name, "name", "", "name the server instead of guessing it from its command or URL")
+	followUps := func(cmd *cobra.Command) {
+		cmd.Flags().BoolVar(&syncAfter, "sync", false, "then sync the scope, which enables what was added")
+		cmd.Flags().BoolVar(&toGist, "gist", false, "then upload config.toml to its gist, as gist push does")
+	}
+	followUps(cmd)
 	run := func(server bool, scope func(*app.App) (app.Scope, error)) func(*cobra.Command, []string) error {
 		return func(cmd *cobra.Command, args []string) error {
-			req := app.AddRequest{Skills: skills, Name: name, MCP: server}
+			req := app.AddRequest{Skills: skills, Name: name, MCP: server, Sync: syncAfter, Gist: toGist}
 			switch dash := cmd.ArgsLenAtDash(); {
 			case dash == 0 && len(args) > 0:
 				req.Command = args
@@ -548,9 +557,6 @@ for you to change.
 				}
 			}
 			report, err := a.Add(s, req)
-			if err != nil {
-				return err
-			}
 			for _, entry := range report.Present {
 				fmt.Printf("present  %s is in the catalog already\n", entry)
 			}
@@ -564,9 +570,23 @@ for you to change.
 				fmt.Printf("updated  %s to the new URL in %s\n", strings.Join(report.Updated, ", "), tilde(report.File))
 			}
 			if len(report.Added) > 0 {
-				fmt.Printf("added    %s to %s; `skillet sync` enables it\n", strings.Join(report.Added, ", "), tilde(report.File))
+				hint := "; `skillet sync` enables it"
+				if syncAfter {
+					hint = ""
+				}
+				fmt.Printf("added    %s to %s%s\n", strings.Join(report.Added, ", "), tilde(report.File), hint)
 			}
-			return nil
+			if report.Sync != nil {
+				printSync(a, *report.Sync)
+			}
+			if report.Gist != "" {
+				verb := "updated"
+				if report.GistCreated {
+					verb = "created"
+				}
+				fmt.Printf("%s https://gist.github.com/%s\n", verb, report.Gist)
+			}
+			return err
 		}
 	}
 	cmd.RunE = run(false, scope)
@@ -577,7 +597,8 @@ for you to change.
 
 The server is named after the package its command starts, or after its
 host; --name names it otherwise. Values of URL parameters that look like
-secrets move to secrets.toml. ` + "`skillet sync`" + ` enables it.
+secrets move to secrets.toml. ` + "`skillet sync`" + `, or --sync right away,
+enables it; --gist uploads config.toml to its gist.
 
   skillet add mcp https://mcp.tavily.com/mcp/?tavilyApiKey=...
   skillet add mcp -- npx @mobilenext/mobile-mcp@latest`,
@@ -585,6 +606,7 @@ secrets move to secrets.toml. ` + "`skillet sync`" + ` enables it.
 		RunE: run(true, nil),
 	}
 	server.Flags().StringVar(&name, "name", "", "name the server instead of guessing it from its command or URL")
+	followUps(server)
 	cmd.AddCommand(server)
 	return cmd
 }

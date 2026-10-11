@@ -55,7 +55,7 @@ or `disable`, to tell what an agent has.
 - Read the catalog with `skillet list --json`. Take skill and pack names from that output; never guess them.
 - To switch a skill off, use `disable`. The catalog is the user's `config.toml`: do not edit it without the user's consent, and add `--save` only when the user asks for a lasting change.
 - Never add `--force`, `--purge`, `--disable-all`, `--disable-skills` or `--disable-mcps` on your own. `--force` deletes whatever stands in the way of a link, `sync --purge` deletes the skills and servers skillet does not manage, `sync --disable-all` disables everything it manages, and `--disable-skills` and `--disable-mcps` one kind of it. When a command prints a `conflict` line, show it to the user and ask.
-- Adding skills to the catalog is the user's decision: it holds skills the user has evaluated. Propose the `skillet add` command and run it only after a yes. Where a skill's page gives an `npx skills add` command, run `skillet add -- <that command>` instead of `npx skills`; where it offers only a single `SKILL.md` URL, run `skillet add <that URL>`. `add` only writes the config file and prints `added <skill>@<source>`, or `skills:<source>` for a whole source, and `updated skills:<skill>` when a new `SKILL.md` URL replaces the old one; `skillet enable <skill>` then switches it on.
+- Adding skills to the catalog is the user's decision: it holds skills the user has evaluated. Propose the `skillet add` command and run it only after a yes. Where a skill's page gives an `npx skills add` command, run `skillet add -- <that command>` instead of `npx skills`; where it offers only a single `SKILL.md` URL, run `skillet add <that URL>`. `add` only writes the config file and prints `added <skill>@<source>`, or `skills:<source>` for a whole source, and `updated skills:<skill>` when a new `SKILL.md` URL replaces the old one; `skillet enable <skill>` then switches it on. With `--sync`, `add` also syncs the scope, which enables it, and prints the sync table. Add `--gist` only when the user asks for it: it uploads `config.toml` to the user's gist and prints `created` or `updated` with the gist's URL.
 - Do not pass `--agents` unless the user asks to act on certain agents only.
 - Agents read their skills directories when a session starts. After a change, tell the user that a skill that does not show up yet is available in the next session.
 
@@ -137,7 +137,8 @@ project: say so, and offer to disable it globally and enable it with `-p` in the
   The server is not enabled until then: run the `enable` command again afterwards.
 - Do not edit `~/.config/skillet/secrets.toml` or the agents' MCP config files by hand. To add a
   server to the catalog, propose `skillet add mcp <url>` or `skillet add mcp -- <command>` and run
-  it only after the user's yes; `skillet enable mcp:<name>` then switches it on.
+  it only after the user's yes; `skillet enable mcp:<name>` then switches it on, or `--sync` on
+  the `add` command.
 
 ## For one session only
 

@@ -26,9 +26,9 @@ symlinks. `README.md` describes the behaviour; keep it short and focused on the 
 - `examples/config.toml` — a starting catalog with that skill enabled; a test loads it
 
 `App.Local` is the user's catalog file. `App.Catalog` is `Local` merged with the included gists and
-the project's manifest, and is what everything reads. `enable`, `disable`, `sync` and `run` change
-links and the agents' MCP entries; only `enable` and `disable` with `--save`, `add`, `import` and
-the `gist` commands write a config file.
+the project's manifest, and is what everything reads. `enable`, `disable`, `sync`, `run` and
+`add --sync` change links and the agents' MCP entries; only `enable` and `disable` with `--save`,
+`add`, `import` and the `gist` commands write a config file.
 
 ## Checks
 

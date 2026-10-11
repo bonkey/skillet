@@ -101,6 +101,7 @@ skillet import --dry-run                 # take over an existing `npx skills` in
 skillet import
 
 skillet add bonkey/skills --skill pr     # a source, or some of its skills; `sync` enables them
+skillet add bonkey/skills --skill pr --sync --gist   # and enable them, and upload the config to its gist
 skillet add https://unpkg.com/@pen.dev/cli@0.3.9/SKILL.md   # one free-standing SKILL.md
 skillet add -- npx skills add bonkey/skills -g --skill captains-log -y   # a pasted `npx skills` command
 skillet add https://mcp.exa.ai/mcp       # a server: a URL that is no git repository
@@ -258,7 +259,7 @@ item = "klmnopqrst"
   what `sync -p` switches on there; a manifest flags only its own entries. The project is the
   nearest directory up the tree with a `.skillet.toml`, or else with a git repository, or else
   the working directory. MCP servers are global: a project cannot enable them, `skillet run` can.
-- **Gists**: `gist = "<id>"` names the gist `gist push` and `gist pull` use; `includes = ["<id>"]`
+- **Gists**: `gist = "<id>"` names the gist `gist push`, `add --gist` and `gist pull` use; `includes = ["<id>"]`
   merges other catalogs into yours. Your own entries win a name clash, then the earlier include.
   Gists may include gists; each takes part once, so cycles are harmless. The `secrets` of an
   included gist are ignored. `config.local.toml` stays on the machine: `gist push` does not send

@@ -150,6 +150,52 @@ func TestAddInAProjectWritesItsManifest(t *testing.T) {
 	}
 }
 
+func TestAddWithSyncEnablesWhatItAdded(t *testing.T) {
+	e := setup(t)
+	report, err := e.app.Add(e.app.Global(), AddRequest{Arg: e.origin, Skills: []string{"alpha"}, Sync: true})
+	if err != nil || report.Sync == nil || !reflect.DeepEqual(report.Added, []string{"alpha@skills"}) {
+		t.Fatalf("report: %+v, %v", report, err)
+	}
+	global := filepath.Join(e.p.Home, ".claude", "skills")
+	if !isLink(filepath.Join(global, "alpha")) || isLink(filepath.Join(global, "beta")) {
+		t.Fatal("sync links what the config switches on")
+	}
+
+	e = setup(t)
+	scope, _ := e.app.ProjectScope()
+	if _, err := e.app.Add(scope, AddRequest{Arg: e.origin, Skills: []string{"beta"}, Sync: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !isLink(filepath.Join(e.p.Cwd, ".claude", "skills", "beta")) {
+		t.Fatal("-p syncs the project")
+	}
+}
+
+func TestAddWithGistPushesTheConfig(t *testing.T) {
+	e := setup(t)
+	gists := &fakeGists{files: map[string]string{}}
+	e.app.Gists = gists
+	report, err := e.app.Add(e.app.Global(), AddRequest{Arg: e.origin, Gist: true})
+	if err != nil || !report.GistCreated || report.Sync != nil {
+		t.Fatalf("report: %+v, %v", report, err)
+	}
+	if got := gists.files[report.Gist]; got != read(t, e.p.ConfigFile()) || !strings.Contains(got, e.origin) {
+		t.Fatalf("the first push creates the gist:\n%s", got)
+	}
+	again, err := e.app.Add(e.app.Global(), AddRequest{Command: strings.Fields("npx mobile-mcp"), Gist: true})
+	if err != nil || again.GistCreated || again.Gist != report.Gist || !strings.Contains(gists.files[report.Gist], "mobile-mcp") {
+		t.Fatalf("the next push updates it: %+v, %v", again, err)
+	}
+
+	scope, _ := e.app.ProjectScope()
+	if _, err := e.app.Add(scope, AddRequest{Arg: e.origin, Gist: true}); err == nil || !strings.Contains(err.Error(), "-p") {
+		t.Fatalf("the gist holds config.toml only: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(e.p.Cwd, paths.ManifestName)); !os.IsNotExist(err) {
+		t.Error("nothing is written")
+	}
+}
+
 func TestAddServerFromACommand(t *testing.T) {
 	e := setup(t)
 	command := strings.Fields("npx @mobilenext/mobile-mcp@latest")

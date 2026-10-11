@@ -24,6 +24,8 @@ type AddRequest struct {
 	Skills  []string // the skills to take; none for every skill of the source
 	Name    string   // the server's name; empty for the one its command or URL gives
 	MCP     bool     // a server, without telling it from a source
+	Sync    bool     // sync the scope afterwards
+	Gist    bool     // push config.toml to its gist afterwards
 }
 
 // AddReport tells what Add found and wrote. A whole source is written
@@ -35,16 +37,42 @@ type AddReport struct {
 	Present []string // what the catalog held already
 	Secrets []string // placeholders whose values went into secrets.toml
 	Notes   []string
-	cloned  []string // the clones Add made, removed again when it fails
+	Sync    *SyncReport // the sync of the scope; nil without Sync
+	Gist    string      // the gist pushed to; empty without Gist
+	// GistCreated tells that the push created the gist.
+	GistCreated bool
+	cloned      []string // the clones Add made, removed again when it fails
 }
 
 // Add puts skill sources or a server into the scope's config file, keeping
 // the file's text (see catalog.Amend). It links nothing and writes no agent
-// config; the next sync enables what it added.
+// config unless Sync is set; otherwise the next sync enables what it added.
+// With Gist set, config.toml goes to its gist as Push sends it.
 // A source is cloned to check the skills it offers. Unless MCP is set, a URL
 // is a source when git can read it and a server when an MCP server answers
 // there, and a command other than `skills add` starts a server.
 func (a *App) Add(scope Scope, req AddRequest) (AddReport, error) {
+	if req.Gist && scope.Project {
+		return AddReport{}, fmt.Errorf("the gist holds config.toml, not %s; drop -p or --gist", paths.ManifestName)
+	}
+	report, err := a.add(scope, req)
+	if err != nil {
+		return report, err
+	}
+	if req.Sync {
+		sync, err := a.Sync(scope, SyncOptions{})
+		report.Sync = &sync
+		if err != nil {
+			return report, err
+		}
+	}
+	if req.Gist {
+		report.Gist, report.GistCreated, err = a.Push(false, false)
+	}
+	return report, err
+}
+
+func (a *App) add(scope Scope, req AddRequest) (AddReport, error) {
 	var report AddReport
 	var specs []source.Spec
 	skills, server := req.Skills, req.MCP
