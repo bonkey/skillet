@@ -102,7 +102,7 @@ is a source, and a bare name or "name@source" is a skill.`,
 	cmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "print every link and config entry, also those that are already right")
 	cmd.PersistentFlags().StringSliceVar(&agents, "agents", nil,
 		"act on these agents instead of those in the catalog (comma separated)")
-	cmd.AddCommand(addCmd(), editCmd(), importCmd(), toggleCmd(true), toggleCmd(false),
+	cmd.AddCommand(addCmd(), removeCmd(), editCmd(), importCmd(), toggleCmd(true), toggleCmd(false),
 		syncCmd(), statusCmd(), listCmd(), updateCmd(), runCmd(), sourcesCmd(), gistCmd(), mcpCmd())
 	return cmd
 }
@@ -614,6 +614,62 @@ enables it; --gist uploads config.toml to its gist.
 	server.Flags().StringVar(&name, "name", "", "name the server instead of guessing it from its command or URL")
 	followUps(server)
 	cmd.AddCommand(server)
+	return cmd
+}
+
+func removeCmd() *cobra.Command {
+	var syncAfter bool
+	cmd := &cobra.Command{
+		Use:   "remove <skills:source|mcp:server|name|url|owner/repo|path>...",
+		Short: "Take a skill source or an MCP server out of the catalog",
+		Long: `Take a skill source or an MCP server out of the catalog.
+
+An argument is a source written "skills:<name>", a server written
+"mcp:<name>", or the bare name of either. A skill's name stands for its
+source when it is the only skill the source takes. A URL, owner/repo or
+path stands for the source of that repository, and a URL that is no
+source for the server with that URL or the name ` + "`skillet add`" + ` gives it.
+
+remove writes the config file, the project's .skillet.toml with -p and
+config.toml otherwise, and keeps its comments and layout. What it removed
+stays enabled until ` + "`skillet sync --clean`" + `, or --sync, which disables it
+right away. A pack that still names it is reported; ` + "`skillet edit`" + ` takes it
+out there. Entries of included gists and of config.local.toml are removed
+in those files.
+
+  skillet remove skills:skills --sync
+  skillet remove bonkey/skills
+  skillet remove https://mcp.exa.ai/mcp
+  skillet remove mcp:mobile-mcp`,
+		Args: cobra.MinimumNArgs(1),
+	}
+	scope := scopeFlags(cmd)
+	cmd.Flags().BoolVar(&syncAfter, "sync", false, "then disable what was removed in the scope")
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		a, err := open()
+		if err != nil {
+			return err
+		}
+		s, err := scope(a)
+		if err != nil {
+			return err
+		}
+		report, err := a.Remove(s, syncAfter, args...)
+		for _, note := range report.Notes {
+			fmt.Println("note    ", tilde(note))
+		}
+		if report.File != "" {
+			hint := "; `skillet sync --clean` disables it"
+			if syncAfter {
+				hint = ""
+			}
+			fmt.Printf("removed  %s from %s%s\n", strings.Join(report.Removed, ", "), tilde(report.File), hint)
+		}
+		if report.Sync != nil {
+			printSync(a, *report.Sync)
+		}
+		return err
+	}
 	return cmd
 }
 

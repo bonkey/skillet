@@ -90,7 +90,7 @@ Archives for macOS and Linux are attached to each
 ## Main uses
 
 You write the catalog: packs go into `config.toml` by hand, sources and servers by hand or with
-`skillet add`; `skillet edit` opens the file. skillet reads it and switches things on and off. In commands, `@name` is a pack, `mcp:name` is an MCP server,
+`skillet add` and `skillet remove`; `skillet edit` opens the file. skillet reads it and switches things on and off. In commands, `@name` is a pack, `mcp:name` is an MCP server,
 `skills:name` is a whole source and a bare name is a skill. `-p` acts on the project around the
 working directory; the default is the global scope. `skillet <command> --help` lists every flag.
 
@@ -107,6 +107,8 @@ skillet add -- npx skills add bonkey/skills -g --skill captains-log -y   # a pas
 skillet add https://mcp.exa.ai/mcp       # a server: a URL that is no git repository
 skillet add -- npx @mobilenext/mobile-mcp@latest   # a server's command
 skillet add mcp <url>                    # a server, without checking the URL
+skillet remove skills:skills --sync      # take a source or a server out of the config and disable it
+skillet remove https://mcp.exa.ai/mcp    # by URL or owner/repo, or by a bare name
 skillet edit --sync                      # open config.toml in $VISUAL or $EDITOR, then sync; -p the project's .skillet.toml
 
 skillet enable @craft                    # a whole pack, globally: its skills and its servers
