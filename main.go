@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 	"slices"
 	"sort"
@@ -328,11 +329,16 @@ func printTables(tables []table, names [8]string) {
 	if len(tables) == 0 {
 		return
 	}
+	// A skill whose folder has another name, such as one at the root of its
+	// source, is linked by its name, so the label shows that name too.
 	label := func(r app.Row) string {
-		if r.Label != "" {
-			return r.Label
+		switch {
+		case r.Label == "":
+			return r.Name
+		case filepath.Base(r.Label) != r.Name:
+			return r.Label + " (" + r.Name + ")"
 		}
-		return r.Name
+		return r.Label
 	}
 	width := 0
 	for _, t := range tables {

@@ -63,6 +63,29 @@ func TestPrintTablesGroupsRowsByPack(t *testing.T) {
 	}
 }
 
+func TestPrintTablesNamesSkillsInFoldersOfAnotherName(t *testing.T) {
+	agents := []string{"claude-code", "codex"}
+	on := map[string]string{"claude-code": app.StateOn, "codex": app.StateOn}
+	skills := []app.Row{
+		{Name: "alpha", Label: "acme/alpha", Agents: on},
+		{Name: "apple-hig", Label: "hig", Agents: on},
+	}
+	got := output(t, func() {
+		printTables([]table{{"global skills", agents, skills, markOfState, nil}}, statusNames)
+	})
+	want := strings.Join([]string{
+		"global skills      claude  codex",
+		"no pack",
+		"  acme/alpha         ok     ok  ",
+		"  hig (apple-hig)    ok     ok  ",
+		"ok on",
+		"",
+	}, "\n")
+	if got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 func TestPrintTablesListsOffPacksAndUnmanagedEntries(t *testing.T) {
 	agents := []string{"claude-code", "codex"}
 	skills := []app.Row{

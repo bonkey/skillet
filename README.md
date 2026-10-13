@@ -139,8 +139,9 @@ of a config file is on unless it says `enabled = false`: `sync` enables what is 
 that have no clone yet, gives every agent directory the same links and lets a link follow a skill
 that moved inside its source. What is enabled although its config file switches it off stays, and
 `sync` reports it as `extra`; `sync --clean` disables it. Commands print what they changed in two tables with
-one column per agent: one row per skill, named by its folder inside the clones, and one row per
-server, grouped under their pack, or under `unmanaged` when skillet does not manage it.
+one column per agent: one row per skill, named by its folder inside the clones and, when the folder
+has another name, by the skill's name in parentheses, and one row per server, grouped under their
+pack, or under `unmanaged` when skillet does not manage it.
 A cell is added, repaired, removed, a conflict, already right,
 or absent where the agent lacks the entry. On a terminal the cells are Nerd Font symbols; piped,
 they are letters. `skillet status` prints the same tables for everything and changes nothing: a

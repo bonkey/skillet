@@ -108,7 +108,9 @@ project: say so, and offer to disable it globally and enable it with `-p` in the
    Disabling one skill of a pack leaves the pack's other skills enabled.
 
 4. Read the output. It lists only what changed, in two tables headed by the scope: `skills` with
-   one row per skill, named by its folder inside the clones, and `mcp` with one row per server,
+   one row per skill, named by its folder inside the clones and, when the folder has another name,
+   by the skill's name in parentheses (`higagentskills (apple-hig)` is the skill `apple-hig`), and
+   `mcp` with one row per server,
    each with one column per agent that has a skills directory or an MCP config. Rows are grouped
    under `@pack` lines, those in no pack under `no pack`, and those skillet does not manage under
    `unmanaged`. A cell is `+` added, `~` repaired,
