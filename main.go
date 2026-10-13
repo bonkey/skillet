@@ -102,23 +102,29 @@ is a source, and a bare name or "name@source" is a skill.`,
 	cmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "print every link and config entry, also those that are already right")
 	cmd.PersistentFlags().StringSliceVar(&agents, "agents", nil,
 		"act on these agents instead of those in the catalog (comma separated)")
-	cmd.AddCommand(addCmd(), importCmd(), toggleCmd(true), toggleCmd(false),
+	cmd.AddCommand(addCmd(), editCmd(), importCmd(), toggleCmd(true), toggleCmd(false),
 		syncCmd(), statusCmd(), listCmd(), updateCmd(), runCmd(), sourcesCmd(), gistCmd(), mcpCmd())
 	return cmd
 }
 
 // scopeFlags adds -g/-p and returns a resolver for the chosen scope.
 func scopeFlags(cmd *cobra.Command) func(*app.App) (app.Scope, error) {
-	var global, project bool
-	cmd.Flags().BoolVarP(&global, "global", "g", false, "act on the global scope (default)")
-	cmd.Flags().BoolVarP(&project, "project", "p", false, "act on the project around the working directory")
-	cmd.MarkFlagsMutuallyExclusive("global", "project")
+	project := projectFlag(cmd)
 	return func(a *app.App) (app.Scope, error) {
-		if project {
+		if *project {
 			return a.ProjectScope()
 		}
 		return a.Global(), nil
 	}
+}
+
+// projectFlag adds -g/-p and tells whether -p was given.
+func projectFlag(cmd *cobra.Command) *bool {
+	var global, project bool
+	cmd.Flags().BoolVarP(&global, "global", "g", false, "act on the global scope (default)")
+	cmd.Flags().BoolVarP(&project, "project", "p", false, "act on the project around the working directory")
+	cmd.MarkFlagsMutuallyExclusive("global", "project")
+	return &project
 }
 
 // tilde shortens paths below the home directory for display.
@@ -608,6 +614,47 @@ enables it; --gist uploads config.toml to its gist.
 	server.Flags().StringVar(&name, "name", "", "name the server instead of guessing it from its command or URL")
 	followUps(server)
 	cmd.AddCommand(server)
+	return cmd
+}
+
+func editCmd() *cobra.Command {
+	var syncAfter bool
+	cmd := &cobra.Command{
+		Use:   "edit",
+		Short: "Open the config file in $VISUAL or $EDITOR",
+		Long: `Open the config file in $VISUAL or $EDITOR: config.toml, or the project's
+.skillet.toml with -p. The file is not read first, so a file that no
+longer parses opens too.
+
+` + "`skillet sync`" + ` enables what the file switches on, or --sync right away;
+` + "`skillet sync --clean`" + ` disables what it switches off.
+
+  skillet edit --sync
+  EDITOR="code --wait" skillet edit -p`,
+		Args: cobra.NoArgs,
+	}
+	project := projectFlag(cmd)
+	cmd.Flags().BoolVar(&syncAfter, "sync", false, "then sync the scope, which enables what the file switches on")
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		p, err := paths.Default()
+		if err != nil {
+			return err
+		}
+		s, err := app.Edit(p, *project)
+		if err != nil || !syncAfter {
+			return err
+		}
+		a, err := open()
+		if err != nil {
+			return err
+		}
+		report, err := a.Sync(s, app.SyncOptions{})
+		printSync(a, report)
+		if err == nil && len(report.Actions)+len(report.MCP)+len(report.Missing)+len(report.MissingSecrets)+len(report.Extra) == 0 {
+			fmt.Println("nothing to change in", tilde(s.String()))
+		}
+		return err
+	}
 	return cmd
 }
 
