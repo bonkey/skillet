@@ -10,8 +10,8 @@ func TestCloneOfAPlainDirectory(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "helm-asc")
 	write(t, filepath.Join(src, "SKILL.md"), "---\nname: helm-asc\ndescription: Drives Helm\n---\n")
 	write(t, filepath.Join(src, "references", "cli.md"), "v1\n")
-	if !IsLocalDir(src) || IsLocalDir(filepath.Join(src, "SKILL.md")) || IsLocalDir("https://example.com/x") {
-		t.Fatal("IsLocalDir tells a local directory from a file and a URL")
+	if !IsSkillDir(src) || IsSkillDir(filepath.Join(src, "SKILL.md")) || IsSkillDir("https://example.com/x") || IsSkillDir(t.TempDir()) {
+		t.Fatal("IsSkillDir tells a local directory with skills from a file, a URL and a directory without skills")
 	}
 	// An app bundle's folder is not ours to write to.
 	if err := os.Chmod(src, 0o555); err != nil {

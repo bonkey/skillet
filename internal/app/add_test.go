@@ -261,11 +261,8 @@ func TestAddTellsAServerURLFromARepository(t *testing.T) {
 	if _, err := e.app.Add(e.app.Global(), AddRequest{Arg: page.URL}); err == nil || !strings.Contains(err.Error(), "add mcp") {
 		t.Fatalf("a web page is neither: %v", err)
 	}
-	if _, err := e.app.Add(e.app.Global(), AddRequest{Arg: filepath.Join(t.TempDir(), "missing")}); err == nil || !strings.Contains(err.Error(), "git repository") {
-		t.Fatalf("a missing path is not a source: %v", err)
-	}
-	if _, err := e.app.Add(e.app.Global(), AddRequest{Command: []string{t.TempDir()}}); err == nil || !strings.Contains(err.Error(), "offers no skills") {
-		t.Fatalf("a directory without skills is a source that offers none: %v", err)
+	if _, err := e.app.Add(e.app.Global(), AddRequest{Arg: t.TempDir()}); err == nil || !strings.Contains(err.Error(), "git repository") {
+		t.Fatalf("a plain directory without skills is not a source: %v", err)
 	}
 }
 
@@ -411,5 +408,13 @@ func TestAddAPlainDirectory(t *testing.T) {
 
 	if report, err := e.app.Add(e.app.Global(), AddRequest{Command: []string{dir}, MCP: true}); err != nil || !reflect.DeepEqual(report.Added, []string{"mcp:helm-asc"}) {
 		t.Fatalf("add mcp takes the command without checking: %+v, %v", report, err)
+	}
+
+	tools := filepath.Join(t.TempDir(), "tools")
+	if err := os.MkdirAll(tools, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if report, err := e.app.Add(e.app.Global(), AddRequest{Command: []string{tools}}); err != nil || !reflect.DeepEqual(report.Added, []string{"mcp:tools"}) {
+		t.Fatalf("a directory without skills is a command like any other: %+v, %v", report, err)
 	}
 }

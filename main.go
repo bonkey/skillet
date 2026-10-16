@@ -516,14 +516,15 @@ keeps the URL as written. Without --skill the source takes every skill it
 offers, also those it gains later. An http(s) URL of a .md file is one
 free-standing SKILL.md, named after its skill; adding another URL for that
 skill replaces the URL, which is how a pinned version moves on. A local
-directory that is no git repository is copied into its clone, and
-` + "`skillet update`" + ` copies it again when it changed. A ` + "`skills add`" + ` command may follow --: its
---skill and --all count, its other options are ignored.
+directory that holds skills but is no git repository is copied into its
+clone, and ` + "`skillet update`" + ` copies it again when it changed. A
+` + "`skills add`" + ` command may follow --: its --skill and --all count, its other
+options are ignored.
 
 A URL that is not a git repository is an MCP server when one answers there,
-and a command after -- that is not ` + "`skills add`" + ` or a directory starts a server;
-` + "`skillet add mcp`" + ` takes a server without checking. Values of URL parameters
-that look like secrets move to secrets.toml.
+and a command after -- that is not ` + "`skills add`" + ` or a directory of skills
+starts a server; ` + "`skillet add mcp`" + ` takes a server without checking.
+Values of URL parameters that look like secrets move to secrets.toml.
 
 add writes the config file, the project's .skillet.toml with -p and
 config.toml otherwise; ` + "`skillet sync`" + ` enables what it added, or --sync right

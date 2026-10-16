@@ -50,8 +50,9 @@ type AddReport struct {
 // With Gist set, config.toml goes to its gist as Push sends it.
 // A source is cloned to check the skills it offers. Unless MCP is set, a URL
 // is a source when git can read it and a server when an MCP server answers
-// there, a local directory is a source, also as the one word of a command,
-// and any other command than `skills add` starts a server.
+// there, a local directory that holds skills is a source, also as the one
+// word of a command, and any other command than `skills add` starts a
+// server.
 func (a *App) Add(scope Scope, req AddRequest) (AddReport, error) {
 	if req.Gist && scope.Project {
 		return AddReport{}, fmt.Errorf("the gist holds config.toml, not %s; drop -p or --gist", paths.ManifestName)
@@ -78,8 +79,8 @@ func (a *App) add(scope Scope, req AddRequest) (AddReport, error) {
 	var specs []source.Spec
 	skills, server := req.Skills, req.MCP
 	if !server && req.Arg == "" && len(req.Command) == 1 {
-		// A directory starts no server.
-		if dir, err := filepath.Abs(req.Command[0]); err == nil && source.IsLocalDir(dir) {
+		// A directory of skills starts no server.
+		if dir, err := filepath.Abs(req.Command[0]); err == nil && source.IsSkillDir(dir) {
 			req.Arg, req.Command = dir, nil
 		}
 	}
@@ -98,7 +99,7 @@ func (a *App) add(scope Scope, req AddRequest) (AddReport, error) {
 			if err != nil {
 				return report, err
 			}
-			if !spec.Repo && !catalog.IsSkillFile(spec.URL) && !source.IsLocalDir(spec.URL) && !source.IsRepo(spec.URL) {
+			if !spec.Repo && !catalog.IsSkillFile(spec.URL) && !source.IsSkillDir(spec.URL) && !source.IsRepo(spec.URL) {
 				return report, fmt.Errorf("%s is not a git repository", arg)
 			}
 			specs = append(specs, spec)
@@ -111,7 +112,7 @@ func (a *App) add(scope Scope, req AddRequest) (AddReport, error) {
 		}
 		web := strings.HasPrefix(req.Arg, "http://") || strings.HasPrefix(req.Arg, "https://")
 		switch {
-		case spec.Repo || catalog.IsSkillFile(spec.URL) || source.IsLocalDir(spec.URL) || source.IsRepo(spec.URL):
+		case spec.Repo || catalog.IsSkillFile(spec.URL) || source.IsSkillDir(spec.URL) || source.IsRepo(spec.URL):
 			specs = append(specs, spec)
 		case !web:
 			return report, fmt.Errorf("%s is not a git repository", req.Arg)

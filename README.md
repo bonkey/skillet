@@ -157,15 +157,15 @@ on.
 `owner/repo/path`, GitHub and GitLab URLs, git URLs and local paths, with an optional `#ref`), or a
 whole `npx skills add` command after `--`, of which `--skill` and `--all` count. An http(s) URL
 of a `.md` file is one free-standing `SKILL.md`: the source is named after its skill, and adding
-another URL for that skill, such as a newer version, replaces the URL. A local directory that is
-no git repository, such as a skill an app ships in its bundle, is copied into its clone, and
-`update` copies it again when it changed. It clones the
+another URL for that skill, such as a newer version, replaces the URL. A local directory that
+holds skills but is no git repository, such as a skill an app ships in its bundle, is copied into
+its clone, and `update` copies it again when it changed. It clones the
 source to check the skills and appends the entry to `config.toml`, or with `-p` to the project's
 `.skillet.toml`, where an existing entry changes only its `only` list. Comments stay: a list that
 holds comments is left for you to change. It links nothing. A URL where git finds no repository
 is a server when an MCP server answers there, a command after `--` other than `skills add` or a
-directory starts a server, and `add mcp` takes a server without checking. Secret-looking URL
-parameters are appended to `secrets.toml`.
+directory of skills starts a server, and `add mcp` takes a server without checking.
+Secret-looking URL parameters are appended to `secrets.toml`.
 
 `import` reads `~/.agents/.skill-lock.json`, fetches every source, creates one pack per source and
 enables everything. It **deletes** the folder of every imported skill in
