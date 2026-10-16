@@ -7,19 +7,26 @@ import (
 	"testing"
 
 	"github.com/bonkey/skillet/internal/app"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
-// output returns what fn prints. Printed to a pipe, the cells are letters and
-// carry no colors.
+// output returns what fn prints. Printed to a pipe, the cells are letters.
+// lipgloss picks its colors from the terminal of the process, not from
+// os.Stdout, so output also turns colors off while fn runs.
 func output(t *testing.T, fn func()) string {
 	t.Helper()
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
-	stdout := os.Stdout
+	stdout, profile := os.Stdout, lipgloss.ColorProfile()
 	os.Stdout = w
-	defer func() { os.Stdout = stdout }()
+	lipgloss.SetColorProfile(termenv.Ascii)
+	defer func() {
+		os.Stdout = stdout
+		lipgloss.SetColorProfile(profile)
+	}()
 	fn()
 	w.Close()
 	data, err := io.ReadAll(r)
