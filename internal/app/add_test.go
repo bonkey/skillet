@@ -261,8 +261,11 @@ func TestAddTellsAServerURLFromARepository(t *testing.T) {
 	if _, err := e.app.Add(e.app.Global(), AddRequest{Arg: page.URL}); err == nil || !strings.Contains(err.Error(), "add mcp") {
 		t.Fatalf("a web page is neither: %v", err)
 	}
-	if _, err := e.app.Add(e.app.Global(), AddRequest{Arg: t.TempDir()}); err == nil || !strings.Contains(err.Error(), "git repository") {
-		t.Fatalf("a plain directory is not a source: %v", err)
+	if _, err := e.app.Add(e.app.Global(), AddRequest{Arg: filepath.Join(t.TempDir(), "missing")}); err == nil || !strings.Contains(err.Error(), "git repository") {
+		t.Fatalf("a missing path is not a source: %v", err)
+	}
+	if _, err := e.app.Add(e.app.Global(), AddRequest{Command: []string{t.TempDir()}}); err == nil || !strings.Contains(err.Error(), "offers no skills") {
+		t.Fatalf("a directory without skills is a source that offers none: %v", err)
 	}
 }
 
@@ -375,5 +378,38 @@ func TestAddAndUpdateASkillFile(t *testing.T) {
 	}
 	if updates, err = e.app.Update(false); err != nil || !reflect.DeepEqual(updates[0].Changed, []string{"pen-design"}) || description() != "Version one" {
 		t.Fatalf("update after a hand edit: %+v, %v, %q", updates, err, description())
+	}
+}
+
+func TestAddAPlainDirectory(t *testing.T) {
+	e := setup(t)
+	dir := filepath.Join(filepath.Dir(e.p.Home), "Helm.app", "helm-asc")
+	write(t, filepath.Join(dir, "SKILL.md"), "---\nname: helm-asc\ndescription: Drives Helm\n---\n")
+	description := func() string {
+		found, _ := e.app.Index.Lookup(e.app.Catalog, "helm-asc")
+		return found.Description
+	}
+
+	report, err := e.app.Add(e.app.Global(), AddRequest{Command: []string{dir}, Sync: true})
+	if err != nil || !reflect.DeepEqual(report.Added, []string{"skills:helm-asc"}) {
+		t.Fatalf("a directory after -- is a source, not a server: %+v, %v", report, err)
+	}
+	if got := read(t, e.p.ConfigFile()); !strings.Contains(got, "[[skills]]\nurl = '"+dir+"'\n") || strings.Contains(got, "mcps") {
+		t.Fatalf("config:\n%s", got)
+	}
+	if !isLink(filepath.Join(e.p.Home, ".claude", "skills", "helm-asc")) || description() != "Drives Helm" {
+		t.Fatal("--sync links the skill of the directory")
+	}
+	if again, err := e.app.Add(e.app.Global(), AddRequest{Arg: dir}); err != nil || !reflect.DeepEqual(again.Present, []string{"skills:helm-asc"}) {
+		t.Fatalf("the directory as an argument: %+v, %v", again, err)
+	}
+
+	write(t, filepath.Join(dir, "SKILL.md"), "---\nname: helm-asc\ndescription: Drives Helm better\n---\n")
+	if _, err := e.app.Update(false); err != nil || description() != "Drives Helm better" {
+		t.Fatalf("update copies the directory again: %v, %q", err, description())
+	}
+
+	if report, err := e.app.Add(e.app.Global(), AddRequest{Command: []string{dir}, MCP: true}); err != nil || !reflect.DeepEqual(report.Added, []string{"mcp:helm-asc"}) {
+		t.Fatalf("add mcp takes the command without checking: %+v, %v", report, err)
 	}
 }

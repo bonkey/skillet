@@ -34,7 +34,13 @@ func fetchFile(dir, url string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	args := []string{"commit-tree", "--no-gpg-sign", "-m", url, tree}
+	return commit(dir, tree, url)
+}
+
+// commit records tree as a commit on HEAD of the clone at dir and returns
+// it, or returns HEAD when HEAD holds tree already.
+func commit(dir, tree, message string) (string, error) {
+	args := []string{"commit-tree", "--no-gpg-sign", "-m", message, tree}
 	if head, err := Head(dir); err == nil {
 		if current, _ := git(dir, "rev-parse", "HEAD^{tree}"); current == tree {
 			return head, nil
@@ -69,5 +75,5 @@ var commitEnv = []string{
 }
 
 func gitInput(dir, input string, args ...string) (string, error) {
-	return run(dir, strings.NewReader(input), args...)
+	return run(dir, strings.NewReader(input), nil, args...)
 }

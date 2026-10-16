@@ -41,13 +41,13 @@ func ParseName(arg string) (name, url string, err error) {
 	return "", "", fmt.Errorf("%q is neither owner/repo nor a git URL", arg)
 }
 
-func git(dir string, args ...string) (string, error) { return run(dir, nil, args...) }
+func git(dir string, args ...string) (string, error) { return run(dir, nil, nil, args...) }
 
-func run(dir string, stdin io.Reader, args ...string) (string, error) {
+func run(dir string, stdin io.Reader, env []string, args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
 	cmd.Stdin = stdin
-	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), commitEnv...)
+	cmd.Env = append(append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), commitEnv...), env...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
@@ -58,17 +58,19 @@ func run(dir string, stdin io.Reader, args ...string) (string, error) {
 
 // Clone makes a shallow clone of url at ref: a branch, a tag, a full commit
 // hash, or the default branch when empty. A SKILL.md URL (see
-// catalog.IsSkillFile) becomes a local repository that holds the file.
+// catalog.IsSkillFile) becomes a local repository that holds the file, and
+// a local directory that git reads as no repository one that holds a copy
+// of its files.
 func Clone(url, ref, dir string) error {
 	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
 		return err
 	}
-	if ref == "" && !catalog.IsSkillFile(url) {
+	if ref == "" && !catalog.IsSkillFile(url) && !plainDir(url) {
 		_, err := git("", "clone", "-q", "--depth", "1", url, dir)
 		return err
 	}
 	// A fetch accepts a commit hash; `clone --branch` takes only branches and
-	// tags. The clone of a SKILL.md URL is made by Fetch.
+	// tags. The clone of a SKILL.md URL or a plain directory is made by Fetch.
 	err := func() error {
 		if _, err := git("", "init", "-q", dir); err != nil {
 			return err
@@ -92,10 +94,15 @@ func Head(dir string) (string, error) { return git(dir, "rev-parse", "HEAD") }
 
 // Fetch downloads the latest upstream commit without touching the work tree
 // and returns its hash. For a clone of a SKILL.md URL, it downloads the file
-// and commits it when it changed.
+// and commits it when it changed; for a clone of a plain directory, it
+// commits the directory's files when they changed.
 func Fetch(dir, ref string) (string, error) {
-	if origin, err := git(dir, "remote", "get-url", "origin"); err == nil && catalog.IsSkillFile(origin) {
+	origin, err := git(dir, "remote", "get-url", "origin")
+	switch {
+	case err == nil && catalog.IsSkillFile(origin):
 		return fetchFile(dir, origin)
+	case err == nil && plainDir(origin):
+		return fetchDir(dir, origin)
 	}
 	if ref == "" {
 		ref = "HEAD"
