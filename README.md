@@ -70,8 +70,8 @@ Archives for macOS and Linux are attached to each
    ```
 
 3. Take over what is already there. `import` reads the lock file of `npx skills` and the MCP
-   servers in the configs of Claude Code, Codex and Gemini CLI into the catalog, moving values
-   that look like secrets into `~/.config/skillet/secrets.toml`:
+   servers in the configs of Claude Code, Codex, Gemini CLI and omp into the catalog, moving
+   values that look like secrets into `~/.config/skillet/secrets.toml`:
 
    ```sh
    skillet import --dry-run
@@ -173,9 +173,9 @@ Secret-looking URL parameters are appended to `secrets.toml`.
 `import` reads `~/.agents/.skill-lock.json`, fetches every source, creates one pack per source and
 enables everything. It **deletes** the folder of every imported skill in
 `~/.agents/skills`; where a configured agent reads that directory, a link takes its place. Folders
-the lock does not list stay. It also reads the MCP servers of Claude Code, Codex and Gemini CLI
-into the catalog: an environment variable, header or URL parameter whose name looks like a secret
-becomes a `${NAME}` placeholder, and its value goes to `secrets.toml`.
+the lock does not list stay. It also reads the MCP servers of Claude Code, Codex, Gemini CLI and
+omp into the catalog: an environment variable, header or URL parameter whose name looks like a
+secret becomes a `${NAME}` placeholder, and its value goes to `secrets.toml`.
 
 [`skills/skillet`](skills/skillet/SKILL.md) teaches agents to search the catalog before looking for
 skills elsewhere, and to enable and disable what they find.
@@ -260,9 +260,10 @@ item = "klmnopqrst"
   `~/.config/skillet/secrets.toml` overrides it. Values are filled in when an agent's config is
   written, so they never reach the catalog or its gist; a server without its secret is left as
   it is and reported.
-- **Agents**: `claude-code`, `codex`, `cursor`, `gemini-cli`, `github-copilot`, `opencode`, `pi`,
-  `zed` get skills; `claude-code`, `codex`, `crush`, `cursor`, `gemini-cli`, `opencode`, `zed` get
-  MCP servers.
+- **Agents**: `claude-code`, `codex`, `cursor`, `gemini-cli`, `github-copilot`, `omp`, `opencode`,
+  `pi`, `zed` get skills; `claude-code`, `codex`, `crush`, `cursor`, `gemini-cli`, `omp`,
+  `opencode`, `zed` get MCP servers. omp's servers go into its default profile,
+  `~/.omp/agent/mcp.json`.
 - **Projects** may hold a `.skillet.toml` of the same shape: its entries join the catalog while
   you work in that project, where the global config wins a name clash, and its own entries are
   what `sync -p` switches on there; a manifest flags only its own entries. The project is the

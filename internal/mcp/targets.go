@@ -18,18 +18,20 @@ type Target struct {
 //	crush        schema.json in github.com/charmbracelet/crush ($defs.MCPConfig)
 //	cursor       https://cursor.com/docs/context/mcp
 //	gemini-cli   docs/tools/mcp-server.md in github.com/google-gemini/gemini-cli
+//	omp          docs/mcp-config.md in github.com/can1357/oh-my-pi
 //	opencode     https://opencode.ai/config.json (McpLocalConfig, McpRemoteConfig)
 //	zed          crates/settings_content/src/project.rs in github.com/zed-industries/zed
 //
 // Codex, opencode and crush reject unknown keys, so an entry holds only
 // documented ones. Timeouts are seconds in the catalog; each agent gets its
-// own unit.
+// own unit. omp takes Claude Code's shape.
 var Targets = map[string]Target{
 	"claude-code": {File: ".claude.json", Node: []string{"mcpServers"}, Render: renderClaude},
 	"codex":       {File: ".codex/config.toml", Node: []string{"mcp_servers"}, TOML: true, Render: renderCodex},
 	"crush":       {File: ".config/crush/crush.json", Node: []string{"mcp"}, Render: renderCrush},
 	"cursor":      {File: ".cursor/mcp.json", Node: []string{"mcpServers"}, Render: renderCursor},
 	"gemini-cli":  {File: ".gemini/settings.json", Node: []string{"mcpServers"}, Render: renderGemini},
+	"omp":         {File: ".omp/agent/mcp.json", Node: []string{"mcpServers"}, Render: renderClaude},
 	"opencode":    {File: ".config/opencode/opencode.json", Node: []string{"mcp"}, Render: renderOpencode},
 	"zed":         {File: ".config/zed/settings.json", Node: []string{"context_servers"}, Render: renderZed},
 }

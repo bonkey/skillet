@@ -29,6 +29,8 @@ var Agents = map[string]Agent{
 	"gemini-cli":     {".gemini/skills", canonical},
 	"github-copilot": {".copilot/skills", canonical},
 	"opencode":       {".config/opencode/skills", canonical},
+	// omp reads ~/.agents/skills and ./.agents/skills, among others.
+	"omp": {canonical, canonical},
 	// pi reads ~/.agents/skills and ./.agents/skills, and warns about a skill
 	// it finds twice.
 	"pi": {canonical, canonical},

@@ -782,3 +782,14 @@ func TestStatusListsAnOffRowUnderThePackThatIsOff(t *testing.T) {
 		t.Errorf("the pack that is off comes first, so that the row is listed under it: %+v", r)
 	}
 }
+
+func TestAgentOf(t *testing.T) {
+	for command, want := range map[string]string{
+		"claude": "claude-code", "gemini": "gemini-cli", "cursor-agent": "cursor", "codex": "codex",
+		"/usr/local/bin/omp": "omp", "make": "",
+	} {
+		if got := agentOf(command); got != want {
+			t.Errorf("agentOf(%q) = %q, want %q", command, got, want)
+		}
+	}
+}

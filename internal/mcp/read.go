@@ -17,6 +17,7 @@ var parsers = map[string]func(map[string]any) catalog.MCP{
 	"claude-code": parseClaude,
 	"codex":       parseCodex,
 	"gemini-cli":  parseGemini,
+	"omp":         parseClaude,
 }
 
 // Readable lists the agents whose config import reads servers from.

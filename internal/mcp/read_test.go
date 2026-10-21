@@ -89,6 +89,25 @@ X-Api-Key = "k"
 		t.Errorf("gemini:\n got %+v\nwant %+v", gemini, want)
 	}
 
+	write(".omp/agent/mcp.json", `{
+  "$schema": "https://raw.githubusercontent.com/can1357/oh-my-pi/main/packages/coding-agent/src/config/mcp-schema.json",
+  "mcpServers": {
+    "fs": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem"] },
+    "github": { "type": "http", "url": "https://api.githubcopilot.com/mcp/", "headers": { "Authorization": "Bearer z" }, "timeout": 3000 }
+  }
+}`)
+	omp, _, err := Read(home, "omp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = map[string]catalog.MCP{
+		"fs":     {Type: "local", Command: []string{"npx", "-y", "@modelcontextprotocol/server-filesystem"}},
+		"github": {Type: "remote", URL: "https://api.githubcopilot.com/mcp/", Headers: map[string]string{"Authorization": "Bearer z"}, Timeout: 3},
+	}
+	if !reflect.DeepEqual(omp, want) {
+		t.Errorf("omp:\n got %+v\nwant %+v", omp, want)
+	}
+
 	if defs, _, err := Read(home, "cursor"); err != nil || defs != nil {
 		t.Errorf("an agent without a parser reads nothing: %v %v", defs, err)
 	}

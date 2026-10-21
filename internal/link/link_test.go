@@ -288,6 +288,11 @@ func TestDirs(t *testing.T) {
 	if !reflect.DeepEqual(got, []string{"/h/.agents/skills"}) {
 		t.Errorf("pi and zed share a directory: %v", got)
 	}
+	for _, project := range []bool{false, true} {
+		if got, _ := Dirs([]string{"pi", "omp"}, "/h", project); !reflect.DeepEqual(got, []string{"/h/.agents/skills"}) {
+			t.Errorf("pi and omp share one directory (project %v): %v", project, got)
+		}
+	}
 	if got, err := Dirs([]string{"crush"}, "/h", false); err != nil || len(got) != 0 {
 		t.Errorf("agents without skills have no directory: %v %v", got, err)
 	}

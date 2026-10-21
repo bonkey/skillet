@@ -747,8 +747,8 @@ Only the definitions (source and skill name) come from the lock. The content
 of every source is fetched fresh. Each imported skill's folder in
 ~/.agents/skills is DELETED; where a configured agent reads that directory, a
 link into the fetched clone takes its place. Folders that are not in the lock
-stay. The MCP servers in the configs of Claude Code, Codex and Gemini CLI
-join the catalog too; values that look like secrets are replaced by ${NAME}
+stay. The MCP servers in the configs of Claude Code, Codex, Gemini CLI and
+omp join the catalog too; values that look like secrets are replaced by ${NAME}
 placeholders and kept in secrets.toml. Review with --dry-run first.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -1304,7 +1304,7 @@ skills, written "mcp:<name>":
   skillet run @ios -- claude
 
 Enabled servers are written into the user configs of the agents listed under
-"agents": claude-code, codex, crush, cursor, gemini-cli, opencode, zed. An
+"agents": claude-code, codex, crush, cursor, gemini-cli, omp, opencode, zed. An
 existing entry of the same name is overwritten and managed from then on;
 entries under other names stay untouched. Servers exist in the global scope
 and in "run" sessions, not in projects.`,

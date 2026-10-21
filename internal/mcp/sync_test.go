@@ -42,6 +42,9 @@ func TestRenderShapes(t *testing.T) {
 		{"crush", sseDef, Entry{{"type", "sse"}, {"url", sseDef.URL}, {"timeout", 30.0}, {"disabled_tools", []string{"danger"}}, {"disabled", false}}},
 		{"zed", localDef, Entry{{"enabled", true}, {"command", "npx"}, {"args", []string{"-y", "simctl-mcp"}}, {"env", localDef.Environment}}},
 		{"zed", remoteDef, Entry{{"enabled", true}, {"url", remoteDef.URL}, {"headers", remoteDef.Headers}}},
+		{"omp", localDef, Entry{{"type", "stdio"}, {"command", "npx"}, {"args", []string{"-y", "simctl-mcp"}}, {"env", localDef.Environment}}},
+		{"omp", remoteDef, Entry{{"type", "http"}, {"url", remoteDef.URL}, {"headers", remoteDef.Headers}}},
+		{"omp", sseDef, Entry{{"type", "sse"}, {"url", sseDef.URL}, {"timeout", 30000.0}}},
 	}
 	for _, tt := range tests {
 		if got := Targets[tt.agent].Render(tt.def); !reflect.DeepEqual(got, tt.want) {
@@ -88,7 +91,7 @@ func TestSyncWritesEveryAgentAndRemovesOnlyItsOwn(t *testing.T) {
 	claude := h.file(".claude.json")
 	original := "{\n  \"numStartups\": 7,\n  \"mcpServers\": {\n    \"mine\": {\n      \"type\": \"http\",\n      \"url\": \"https://mine\"\n    }\n  }\n}\n"
 	os.WriteFile(claude, []byte(original), 0o644)
-	agents := []string{"claude-code", "codex", "pi", "zed"}
+	agents := []string{"claude-code", "codex", "omp", "pi", "zed"}
 	desired := map[string]catalog.MCP{"simctl": localDef, "remote": remoteDef}
 
 	got := h.sync(t, agents, desired, Options{})
@@ -96,6 +99,7 @@ func TestSyncWritesEveryAgentAndRemovesOnlyItsOwn(t *testing.T) {
 		".claude.json#remote": OpAdd, ".claude.json#simctl": OpAdd,
 		".codex/config.toml#remote": OpAdd, ".codex/config.toml#simctl": OpAdd,
 		".config/zed/settings.json#remote": OpAdd, ".config/zed/settings.json#simctl": OpAdd,
+		".omp/agent/mcp.json#remote": OpAdd, ".omp/agent/mcp.json#simctl": OpAdd,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("first sync: %v", got)
@@ -109,12 +113,13 @@ func TestSyncWritesEveryAgentAndRemovesOnlyItsOwn(t *testing.T) {
 	if info, _ := os.Stat(claude); info.Mode().Perm() != 0o644 {
 		t.Errorf("an existing file keeps its mode: %v", info.Mode().Perm())
 	}
-	if actions, kept, _, err := Sync(h.dir, agents, desired, asIs, h.state, Options{}); err != nil || len(actions) != 0 || len(kept) != 6 || kept[0].Op != OpKeep {
+	if actions, kept, _, err := Sync(h.dir, agents, desired, asIs, h.state, Options{}); err != nil || len(actions) != 0 || len(kept) != 8 || kept[0].Op != OpKeep {
 		t.Fatalf("second sync must be a no-op that reports every entry as kept: %v %v %v", actions, kept, err)
 	}
 
 	got = h.sync(t, agents, map[string]catalog.MCP{"remote": remoteDef}, Options{})
-	want = map[string]string{".claude.json#simctl": OpRemove, ".codex/config.toml#simctl": OpRemove, ".config/zed/settings.json#simctl": OpRemove}
+	want = map[string]string{".claude.json#simctl": OpRemove, ".codex/config.toml#simctl": OpRemove, ".config/zed/settings.json#simctl": OpRemove,
+		".omp/agent/mcp.json#simctl": OpRemove}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("a server that is no longer desired goes: %v", got)
 	}
