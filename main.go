@@ -320,9 +320,10 @@ func printStatus(a *app.App, status app.Status) {
 }
 
 // printTables prints tables whose first columns share one width, so that
-// their agent columns line up. Rows are grouped by their first pack, in
-// pack name order; rows in no pack and then unmanaged rows come last. One
-// legend follows.
+// their agent columns line up. Rows are grouped by their first pack. The
+// packs that are on come first, in name order, then rows in no pack, then
+// unmanaged rows, then the packs that are off, in name order. One legend
+// follows.
 func printTables(tables []table, names [8]string) {
 	tables = slices.DeleteFunc(tables, func(t table) bool {
 		return len(t.agents) == 0 || len(t.rows)+len(t.off) == 0
@@ -374,15 +375,11 @@ func printTables(tables []table, names [8]string) {
 				groups[""] = append(groups[""], r)
 			}
 		}
-		for _, pack := range slices.Compact(slices.Sorted(slices.Values(append(sortedKeys(groups), t.off...)))) {
-			switch {
-			case pack == "":
-				continue
-			case slices.Contains(t.off, pack):
-				fmt.Println(glyphStyles[markNone].Render("@" + pack + "  off"))
-			default:
-				fmt.Println(styleHeading.Render("@" + pack))
-			}
+		on := slices.DeleteFunc(sortedKeys(groups), func(pack string) bool {
+			return pack == "" || slices.Contains(t.off, pack)
+		})
+		for _, pack := range on {
+			fmt.Println(styleHeading.Render("@" + pack))
 			for _, r := range groups[pack] {
 				printRow(r, label(r), width, t, glyphs, used)
 			}
@@ -395,6 +392,12 @@ func printTables(tables []table, names [8]string) {
 				fmt.Println(styleHeading.Render(group.heading))
 			}
 			for _, r := range group.rows {
+				printRow(r, label(r), width, t, glyphs, used)
+			}
+		}
+		for _, pack := range slices.Sorted(slices.Values(t.off)) {
+			fmt.Println(glyphStyles[markNone].Render("@" + pack + "  off"))
+			for _, r := range groups[pack] {
 				printRow(r, label(r), width, t, glyphs, used)
 			}
 		}
@@ -835,11 +838,12 @@ agent:
   unmanaged  on the disk but not managed by skillet
   absent     the agent does not have it
 
-A pack switched off in the config file is headed "off" and lists its
-members; one that is not on the disk is absent for every agent, and "off"
-in --json. --unmanaged also lists, under "unmanaged", the skills and servers
-in the agents' directories and configs that skillet does not manage: those
-sync --purge deletes. --json prints the same as a list of scopes.`,
+Packs are listed by name, those that are on first. A pack switched off in
+the config file comes last, is headed "off" and lists its members; one that
+is not on the disk is absent for every agent, and "off" in --json.
+--unmanaged also lists, under "unmanaged", the skills and servers in the
+agents' directories and configs that skillet does not manage: those sync
+--purge deletes. --json prints the same as a list of scopes.`,
 		Args: cobra.NoArgs,
 	}
 	scope := scopeFlags(cmd)

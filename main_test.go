@@ -57,14 +57,49 @@ func TestPrintTablesGroupsRowsByPack(t *testing.T) {
 		"global skills  claude  codex",
 		"@core",
 		"  acme/alpha     ok     ok  ",
-		"@ios  off",
 		"no pack",
 		"  acme/beta      x       -  ",
+		"@ios  off",
 		"",
 		"global mcp     claude  codex",
 		"@core",
 		"  exa            e      ok  ",
 		"- absent   ok on   x not on disk; sync enables   e off in config; sync --clean disables",
+		"",
+	}, "\n")
+	if got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestPrintTablesListsPacksThatAreOffLast(t *testing.T) {
+	agents := []string{"claude-code"}
+	on := map[string]string{"claude-code": app.StateOn}
+	off := map[string]string{"claude-code": app.StateOff}
+	skills := []app.Row{
+		{Name: "zeta", Label: "acme/zeta", Packs: []string{"web"}, Agents: on},
+		{Name: "gamma", Label: "acme/gamma", Packs: []string{"ios"}, Agents: off},
+		{Name: "alpha", Label: "acme/alpha", Packs: []string{"core"}, Agents: on},
+		{Name: "beta", Label: "acme/beta", Agents: on},
+		{Name: "hand", Label: "hand", Unmanaged: true, Agents: map[string]string{"claude-code": app.StateUnmanaged}},
+	}
+	got := output(t, func() {
+		printTables([]table{{"global skills", agents, skills, markOfState, []string{"ios", "android"}}}, statusNames)
+	})
+	want := strings.Join([]string{
+		"global skills  claude",
+		"@core",
+		"  acme/alpha     ok  ",
+		"@web",
+		"  acme/zeta      ok  ",
+		"no pack",
+		"  acme/beta      ok  ",
+		"unmanaged",
+		"  hand           u   ",
+		"@android  off",
+		"@ios  off",
+		"  acme/gamma     -   ",
+		"- absent   ok on   u not managed by skillet",
 		"",
 	}, "\n")
 	if got != want {
@@ -92,10 +127,10 @@ func TestPrintStatusListsSkillsAndServersOfAPackInOneTable(t *testing.T) {
 		"@core",
 		"  acme/alpha    ok    ok   - ",
 		"  mcp:exa       ok    -   ok ",
-		"@web  off",
-		"  mcp:shadcn    -     -    - ",
 		"no pack",
 		"  acme/beta     ok    x    - ",
+		"@web  off",
+		"  mcp:shadcn    -     -    - ",
 		"- absent   ok on   x not on disk; sync enables",
 		"",
 	}, "\n")
@@ -139,11 +174,11 @@ func TestPrintTablesListsOffPacksAndUnmanagedEntries(t *testing.T) {
 	})
 	want := strings.Join([]string{
 		"global skills  claude  codex",
+		"unmanaged",
+		"  hand           u       -  ",
 		"@ios  off",
 		"  acme/beta      e       e  ",
 		"  acme/gamma     -       -  ",
-		"unmanaged",
-		"  hand           u       -  ",
 		"- absent   e off in config; sync --clean disables   u not managed by skillet",
 		"",
 	}, "\n")
