@@ -192,16 +192,18 @@ const (
 	markConflict              // something in the way
 	markExtra                 // on the disk, off in the config
 	markUnmanaged             // on the disk, not managed by skillet
+	markNA                    // the agent takes no skills, or no MCP servers
 )
 
 // glyphs are the cells of the tables: Nerd Font symbols on a terminal,
 // letters when the output is piped, so that a program can read them.
 var (
-	nerdGlyphs  = [...]string{"\uf068", "\uf00c", "\uf067", "\uf021", "\uf00d", "\uf071", "\uf06a", "\uf10c"}
-	asciiGlyphs = [...]string{"-", "ok", "+", "~", "x", "!", "e", "u"}
-	syncNames   = [...]string{"absent", "kept", "added", "repaired", "removed", "conflict", "extra", "unmanaged"}
+	nerdGlyphs  = [...]string{"\uf068", "\uf00c", "\uf067", "\uf021", "\uf00d", "\uf071", "\uf06a", "\uf10c", "\uf05e"}
+	asciiGlyphs = [...]string{"-", "ok", "+", "~", "x", "!", "e", "u", "na"}
+	syncNames   = [...]string{"absent", "kept", "added", "repaired", "removed", "conflict", "extra", "unmanaged",
+		"not supported by the agent"}
 	statusNames = [...]string{"absent", "on", "added", "sync repairs", "not on disk; sync enables", "conflict",
-		"off in config; sync --clean disables", "not managed by skillet"}
+		"off in config; sync --clean disables", "not managed by skillet", "not supported by the agent"}
 	glyphStyles = [...]lipgloss.Style{
 		lipgloss.NewStyle().Faint(true),
 		lipgloss.NewStyle().Foreground(lipgloss.Color("2")),
@@ -211,6 +213,7 @@ var (
 		lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true),
 		lipgloss.NewStyle().Foreground(lipgloss.Color("5")),
 		lipgloss.NewStyle().Foreground(lipgloss.Color("6")),
+		lipgloss.NewStyle().Faint(true),
 	}
 	styleHeading = lipgloss.NewStyle().Bold(true)
 )
@@ -324,7 +327,7 @@ func printStatus(a *app.App, status app.Status) {
 // packs that are on come first, in name order, then rows in no pack, then
 // unmanaged rows, then the packs that are off, in name order. One legend
 // follows.
-func printTables(tables []table, names [8]string) {
+func printTables(tables []table, names [9]string) {
 	tables = slices.DeleteFunc(tables, func(t table) bool {
 		return len(t.agents) == 0 || len(t.rows)+len(t.off) == 0
 	})
@@ -403,7 +406,7 @@ func printTables(tables []table, names [8]string) {
 		}
 	}
 	var legend []string
-	for cell := markNone; cell <= markUnmanaged; cell++ {
+	for cell := markNone; cell <= markNA; cell++ {
 		if used[cell] {
 			legend = append(legend, glyphStyles[cell].Render(glyphs[cell])+" "+names[cell])
 		}
@@ -413,10 +416,15 @@ func printTables(tables []table, names [8]string) {
 	}
 }
 
-func printRow(r app.Row, label string, width int, t table, glyphs [8]string, used map[mark]bool) {
+func printRow(r app.Row, label string, width int, t table, glyphs [9]string, used map[mark]bool) {
 	fmt.Printf("  %-*s", width-2, label)
 	for _, agent := range t.agents {
-		cell := t.mark(r.Agents[agent])
+		// A row has no entry for an agent that takes no skills or no MCP
+		// servers, whichever the row is.
+		cell := markNA
+		if value, ok := r.Agents[agent]; ok {
+			cell = t.mark(value)
+		}
 		used[cell] = true
 		name, span := shortAgent(agent), lipgloss.Width(glyphs[cell])
 		pad := (len(name) - span) / 2
@@ -837,6 +845,9 @@ agent:
   conflict   something skillet does not own stands in the way
   unmanaged  on the disk but not managed by skillet
   absent     the agent does not have it
+
+A cell is n/a where the agent takes no skills, or no MCP servers; --json
+leaves that agent out of the row.
 
 Packs are listed by name, those that are on first. A pack switched off in
 the config file comes last, is headed "off" and lists its members; one that

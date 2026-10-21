@@ -147,8 +147,9 @@ or absent where the agent lacks the entry. On a terminal the cells are Nerd Font
 they are letters. `skillet status` prints everything and changes nothing, in one table per scope
 that lists each pack's skills and then its servers, named `mcp:name`: a cell is on, not on the disk
 although the config switches it on (`sync` enables it), on the disk although the config switches it
-off (`sync --clean` disables it), in need of repair, a conflict or absent. Packs are listed by name,
-those that are on first; a pack that is off comes last, headed `off`, and lists its members.
+off (`sync --clean` disables it), in need of repair, a conflict or absent, or n/a where the agent
+takes no skills, or no MCP servers. Packs are listed by name, those that are on first; a pack that
+is off comes last, headed `off`, and lists its members.
 `status --unmanaged` also lists the skills and servers skillet does not manage; `status --json`
 prints it for programs.
 `--verbose` prints every link and server entry instead, also those that were already right, and then the enabled

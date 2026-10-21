@@ -108,7 +108,7 @@ func TestPrintTablesListsPacksThatAreOffLast(t *testing.T) {
 }
 
 func TestPrintStatusListsSkillsAndServersOfAPackInOneTable(t *testing.T) {
-	a := &app.App{Paths: paths.Paths{Home: "/h"}, Catalog: &catalog.Catalog{Agents: []string{"claude-code", "pi", "zed"}}}
+	a := &app.App{Paths: paths.Paths{Home: "/h"}, Catalog: &catalog.Catalog{Agents: []string{"claude-code", "pi", "crush"}}}
 	status := app.Status{
 		Report: app.SyncReport{Scope: a.Global()},
 		Skills: []app.Row{
@@ -116,22 +116,22 @@ func TestPrintStatusListsSkillsAndServersOfAPackInOneTable(t *testing.T) {
 			{Name: "beta", Label: "acme/beta", Agents: map[string]string{"claude-code": app.StateOn, "pi": app.StateDrift}},
 		},
 		MCPs: []app.Row{
-			{Name: "exa", Packs: []string{"core"}, Agents: map[string]string{"claude-code": app.StateOn, "zed": app.StateOn}},
-			{Name: "shadcn", Packs: []string{"web"}, Agents: map[string]string{"claude-code": app.StateOff, "zed": app.StateOff}},
+			{Name: "exa", Packs: []string{"core"}, Agents: map[string]string{"claude-code": app.StateOn, "crush": app.StateOn}},
+			{Name: "shadcn", Packs: []string{"web"}, Agents: map[string]string{"claude-code": app.StateOff, "crush": app.StateOff}},
 		},
 		OffPacks: []string{"web"},
 	}
 	got := output(t, func() { printStatus(a, status) })
 	want := strings.Join([]string{
-		"global        claude  pi  zed",
+		"global        claude  pi  crush",
 		"@core",
-		"  acme/alpha    ok    ok   - ",
-		"  mcp:exa       ok    -   ok ",
+		"  acme/alpha    ok    ok   na  ",
+		"  mcp:exa       ok    na   ok  ",
 		"no pack",
-		"  acme/beta     ok    x    - ",
+		"  acme/beta     ok    x    na  ",
 		"@web  off",
-		"  mcp:shadcn    -     -    - ",
-		"- absent   ok on   x not on disk; sync enables",
+		"  mcp:shadcn    -     na    -  ",
+		"- absent   ok on   x not on disk; sync enables   na not supported by the agent",
 		"",
 	}, "\n")
 	if got != want {
