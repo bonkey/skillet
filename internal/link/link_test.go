@@ -280,7 +280,15 @@ func TestDirs(t *testing.T) {
 	if !reflect.DeepEqual(got, []string{"/h/.claude/skills", "/h/.codex/skills", "/h/.agents/skills"}) {
 		t.Errorf("global dirs: %v", got)
 	}
-	if got, err := Dirs([]string{"crush", "zed"}, "/h", false); err != nil || len(got) != 0 {
+	got, _ = Dirs([]string{"zed"}, "/h", false)
+	if !reflect.DeepEqual(got, []string{"/h/.agents/skills"}) {
+		t.Errorf("zed dirs: %v", got)
+	}
+	got, _ = Dirs([]string{"pi", "zed"}, "/h", false)
+	if !reflect.DeepEqual(got, []string{"/h/.agents/skills"}) {
+		t.Errorf("pi and zed share a directory: %v", got)
+	}
+	if got, err := Dirs([]string{"crush"}, "/h", false); err != nil || len(got) != 0 {
 		t.Errorf("agents without skills have no directory: %v %v", got, err)
 	}
 	if _, err := Dirs([]string{"nope"}, "/h", false); err == nil {

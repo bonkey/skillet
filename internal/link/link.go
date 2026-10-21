@@ -32,9 +32,11 @@ var Agents = map[string]Agent{
 	// pi reads ~/.agents/skills and ./.agents/skills, and warns about a skill
 	// it finds twice.
 	"pi": {canonical, canonical},
-	// crush and zed take MCP servers only; they have no skills directory.
+	// zed reads ~/.agents/skills and the skills of trusted worktrees in
+	// ./.agents/skills.
+	"zed": {canonical, canonical},
+	// crush takes MCP servers only; it has no skills directory.
 	"crush": {},
-	"zed":   {},
 }
 
 // Dirs lists the skill directories of the agents below base. base is the

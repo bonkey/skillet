@@ -259,9 +259,9 @@ item = "klmnopqrst"
   `~/.config/skillet/secrets.toml` overrides it. Values are filled in when an agent's config is
   written, so they never reach the catalog or its gist; a server without its secret is left as
   it is and reported.
-- **Agents**: `claude-code`, `codex`, `cursor`, `gemini-cli`, `github-copilot`, `opencode`, `pi`
-  get skills; `claude-code`, `codex`, `crush`, `cursor`, `gemini-cli`, `opencode`, `zed` get MCP
-  servers.
+- **Agents**: `claude-code`, `codex`, `cursor`, `gemini-cli`, `github-copilot`, `opencode`, `pi`,
+  `zed` get skills; `claude-code`, `codex`, `crush`, `cursor`, `gemini-cli`, `opencode`, `zed` get
+  MCP servers.
 - **Projects** may hold a `.skillet.toml` of the same shape: its entries join the catalog while
   you work in that project, where the global config wins a name clash, and its own entries are
   what `sync -p` switches on there; a manifest flags only its own entries. The project is the
