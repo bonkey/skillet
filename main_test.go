@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/bonkey/skillet/internal/app"
+	"github.com/bonkey/skillet/internal/catalog"
+	"github.com/bonkey/skillet/internal/paths"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 )
@@ -63,6 +65,38 @@ func TestPrintTablesGroupsRowsByPack(t *testing.T) {
 		"@core",
 		"  exa            e      ok  ",
 		"- absent   ok on   x not on disk; sync enables   e off in config; sync --clean disables",
+		"",
+	}, "\n")
+	if got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestPrintStatusListsSkillsAndServersOfAPackInOneTable(t *testing.T) {
+	a := &app.App{Paths: paths.Paths{Home: "/h"}, Catalog: &catalog.Catalog{Agents: []string{"claude-code", "pi", "zed"}}}
+	status := app.Status{
+		Report: app.SyncReport{Scope: a.Global()},
+		Skills: []app.Row{
+			{Name: "alpha", Label: "acme/alpha", Packs: []string{"core"}, Agents: map[string]string{"claude-code": app.StateOn, "pi": app.StateOn}},
+			{Name: "beta", Label: "acme/beta", Agents: map[string]string{"claude-code": app.StateOn, "pi": app.StateDrift}},
+		},
+		MCPs: []app.Row{
+			{Name: "exa", Packs: []string{"core"}, Agents: map[string]string{"claude-code": app.StateOn, "zed": app.StateOn}},
+			{Name: "shadcn", Packs: []string{"web"}, Agents: map[string]string{"claude-code": app.StateOff, "zed": app.StateOff}},
+		},
+		OffPacks: []string{"web"},
+	}
+	got := output(t, func() { printStatus(a, status) })
+	want := strings.Join([]string{
+		"global        claude  pi  zed",
+		"@core",
+		"  acme/alpha    ok    ok   - ",
+		"  mcp:exa       ok    -   ok ",
+		"@web  off",
+		"  mcp:shadcn    -     -    - ",
+		"no pack",
+		"  acme/beta     ok    x    - ",
+		"- absent   ok on   x not on disk; sync enables",
 		"",
 	}, "\n")
 	if got != want {

@@ -144,11 +144,12 @@ has another name, by the skill's name in parentheses, and one row per server, gr
 pack, or under `unmanaged` when skillet does not manage it.
 A cell is added, repaired, removed, a conflict, already right,
 or absent where the agent lacks the entry. On a terminal the cells are Nerd Font symbols; piped,
-they are letters. `skillet status` prints the same tables for everything and changes nothing: a
-cell is on, not on the disk although the config switches it on (`sync` enables it), on the disk
-although the config switches it off (`sync --clean` disables it), in need of repair, a conflict or
-absent. A pack that is off is headed `off` and lists its members. `status --unmanaged` also lists
-the skills and servers skillet does not manage; `status --json` prints it for programs.
+they are letters. `skillet status` prints everything and changes nothing, in one table per scope
+that lists each pack's skills and then its servers, named `mcp:name`: a cell is on, not on the disk
+although the config switches it on (`sync` enables it), on the disk although the config switches it
+off (`sync --clean` disables it), in need of repair, a conflict or absent. A pack that is off is
+headed `off` and lists its members. `status --unmanaged` also lists the skills and servers skillet
+does not manage; `status --json` prints it for programs.
 `--verbose` prints every link and server entry instead, also those that were already right, and then the enabled
 skills and servers grouped by pack, the change grouped the same way, and the packs with nothing
 on.

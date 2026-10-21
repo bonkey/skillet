@@ -298,23 +298,24 @@ func printTable(a *app.App, report app.SyncReport) {
 }
 
 // printStatus prints every skill and server of a scope with its state per
-// agent, and the packs that are off.
+// agent in one table, and the packs that are off. A pack lists its skills,
+// then its servers, named mcp:name as commands take them. The table has a
+// column per agent with a skills directory or an MCP config.
 func printStatus(a *app.App, status app.Status) {
 	dirs, files := a.Columns(status.Report.Scope)
-	var offSkills, offServers []string
-	for _, pack := range status.OffPacks {
-		set := catalog.Set{Packs: []string{pack}}
-		if len(a.Catalog.Resolve(set)) > 0 || len(a.Catalog.ResolveMCPs(set)) == 0 {
-			offSkills = append(offSkills, pack)
-		}
-		if len(a.Catalog.ResolveMCPs(set)) > 0 {
-			offServers = append(offServers, pack)
+	var agents []string
+	for _, name := range a.Catalog.Agents {
+		if slices.Contains(agentsOf(dirs), name) || slices.Contains(agentsOf(files), name) {
+			agents = append(agents, name)
 		}
 	}
-	scope := tilde(status.Report.Scope.String())
+	rows := slices.Clone(status.Skills)
+	for _, r := range status.MCPs {
+		r.Name = catalog.MCPPrefix + r.Name
+		rows = append(rows, r)
+	}
 	printTables([]table{
-		{scope + " skills", agentsOf(dirs), status.Skills, markOfState, offSkills},
-		{scope + " mcp", agentsOf(files), status.MCPs, markOfState, offServers},
+		{tilde(status.Report.Scope.String()), agents, rows, markOfState, status.OffPacks},
 	}, statusNames)
 }
 
@@ -822,8 +823,9 @@ func statusCmd() *cobra.Command {
 		Short: "Show every skill and server with its state per agent (global and the project)",
 		Long: `Show every skill and server with its state per agent, and change nothing.
 
-A table per scope and kind has a row per skill, named by its folder inside
-the clones, or per server, grouped by pack, and a column per agent:
+A table per scope has a row per skill, named by its folder inside the
+clones, and per server, named mcp:name, grouped by pack, and a column per
+agent:
 
   on         on in the config file and on the disk
   drift      on in the config file but not on the disk; sync enables it
