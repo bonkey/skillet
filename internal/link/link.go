@@ -39,6 +39,9 @@ var Agents = map[string]Agent{
 	"zed": {canonical, canonical},
 	// crush takes MCP servers only; it has no skills directory.
 	"crush": {},
+	// Claude Desktop takes MCP servers only; its skills come from the
+	// claude.ai account.
+	"claude-desktop": {},
 }
 
 // Dirs lists the skill directories of the agents below base. base is the

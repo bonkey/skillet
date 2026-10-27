@@ -261,9 +261,12 @@ item = "klmnopqrst"
   written, so they never reach the catalog or its gist; a server without its secret is left as
   it is and reported.
 - **Agents**: `claude-code`, `codex`, `cursor`, `gemini-cli`, `github-copilot`, `omp`, `opencode`,
-  `pi`, `zed` get skills; `claude-code`, `codex`, `crush`, `cursor`, `gemini-cli`, `omp`,
-  `opencode`, `zed` get MCP servers. omp's servers go into its default profile,
-  `~/.omp/agent/mcp.json`.
+  `pi`, `zed` get skills; `claude-code`, `claude-desktop`, `codex`, `crush`, `cursor`,
+  `gemini-cli`, `omp`, `opencode`, `zed` get MCP servers. omp's servers go into its default
+  profile, `~/.omp/agent/mcp.json`. Claude Desktop gets local servers only, in
+  `~/Library/Application Support/Claude/claude_desktop_config.json` (`~/.config/Claude/` on
+  Linux), and reads them when the app starts; remote servers and skills reach it as connectors
+  and skills of the claude.ai account. Its Code tab runs Claude Code, which `claude-code` covers.
 - **Projects** may hold a `.skillet.toml` of the same shape: its entries join the catalog while
   you work in that project, where the global config wins a name clash, and its own entries are
   what `sync -p` switches on there; a manifest flags only its own entries. The project is the

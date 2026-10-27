@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/bonkey/skillet/internal/catalog"
+	"github.com/bonkey/skillet/internal/mcp"
 	"github.com/bonkey/skillet/internal/secrets"
 )
 
@@ -246,5 +247,30 @@ func TestAnUnreadableItemLeavesServersAlone(t *testing.T) {
 	}
 	if text := read(t, filepath.Join(e.p.Home, ".claude.json")); !strings.Contains(text, "simctl") || strings.Contains(text, "tavily") {
 		t.Errorf("the other server is written:\n%s", text)
+	}
+}
+
+func TestClaudeDesktopGetsOnlyLocalServers(t *testing.T) {
+	e := setup(t)
+	withServers(t, &e)
+	e.app.Local.Agents = []string{"claude-code", "claude-desktop"}
+	if err := e.app.Save(); err != nil {
+		t.Fatal(err)
+	}
+	writeSecrets(t, e, "TAVILY_API_KEY = \"tvly-secret\"\n")
+
+	report, err := e.app.Toggle(e.app.Global(), true, false, "@ios")
+	if err != nil {
+		t.Fatal(err)
+	}
+	desktop := filepath.Join(e.p.Home, filepath.FromSlash(mcp.Targets["claude-desktop"].File))
+	if text := read(t, desktop); !strings.Contains(text, `"simctl"`) || strings.Contains(text, "tavily") {
+		t.Errorf("claude desktop config:\n%s", text)
+	}
+	if text := read(t, filepath.Join(e.p.Home, ".claude.json")); !strings.Contains(text, "tavily") {
+		t.Errorf("other agents still get remote servers:\n%s", text)
+	}
+	if len(report.Notes) != 1 || !strings.Contains(report.Notes[0], "claude-desktop") || !strings.Contains(report.Notes[0], "tavily") {
+		t.Errorf("the remote server left out is named in a note: %q", report.Notes)
 	}
 }

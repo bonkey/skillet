@@ -1,6 +1,10 @@
 package mcp
 
-import "github.com/bonkey/skillet/internal/catalog"
+import (
+	"runtime"
+
+	"github.com/bonkey/skillet/internal/catalog"
+)
 
 // Target is where and how one agent keeps its user-level MCP servers.
 type Target struct {
@@ -8,32 +12,45 @@ type Target struct {
 	Node   []string // path of the object, or TOML table, that holds the servers
 	TOML   bool
 	Render func(def catalog.MCP) Entry
+	// LocalOnly marks an agent whose config takes no remote servers.
+	LocalOnly bool
 }
 
 // Targets lists the agents that skillet can configure, by agent name. The
 // shapes follow each agent's documentation or config source:
 //
-//	claude-code  https://code.claude.com/docs/en/mcp
-//	codex        codex-rs/config/src/mcp_types.rs in github.com/openai/codex
-//	crush        schema.json in github.com/charmbracelet/crush ($defs.MCPConfig)
-//	cursor       https://cursor.com/docs/context/mcp
-//	gemini-cli   docs/tools/mcp-server.md in github.com/google-gemini/gemini-cli
-//	omp          docs/mcp-config.md in github.com/can1357/oh-my-pi
-//	opencode     https://opencode.ai/config.json (McpLocalConfig, McpRemoteConfig)
-//	zed          crates/settings_content/src/project.rs in github.com/zed-industries/zed
+//	claude-code     https://code.claude.com/docs/en/mcp
+//	claude-desktop  https://modelcontextprotocol.io/docs/develop/connect-local-servers
+//	codex           codex-rs/config/src/mcp_types.rs in github.com/openai/codex
+//	crush           schema.json in github.com/charmbracelet/crush ($defs.MCPConfig)
+//	cursor          https://cursor.com/docs/context/mcp
+//	gemini-cli      docs/tools/mcp-server.md in github.com/google-gemini/gemini-cli
+//	omp             docs/mcp-config.md in github.com/can1357/oh-my-pi
+//	opencode        https://opencode.ai/config.json (McpLocalConfig, McpRemoteConfig)
+//	zed             crates/settings_content/src/project.rs in github.com/zed-industries/zed
 //
 // Codex, opencode and crush reject unknown keys, so an entry holds only
 // documented ones. Timeouts are seconds in the catalog; each agent gets its
-// own unit. omp takes Claude Code's shape.
+// own unit. omp takes Claude Code's shape. Claude Desktop's config takes
+// local servers only; remote ones are connectors of the claude.ai account.
 var Targets = map[string]Target{
-	"claude-code": {File: ".claude.json", Node: []string{"mcpServers"}, Render: renderClaude},
-	"codex":       {File: ".codex/config.toml", Node: []string{"mcp_servers"}, TOML: true, Render: renderCodex},
-	"crush":       {File: ".config/crush/crush.json", Node: []string{"mcp"}, Render: renderCrush},
-	"cursor":      {File: ".cursor/mcp.json", Node: []string{"mcpServers"}, Render: renderCursor},
-	"gemini-cli":  {File: ".gemini/settings.json", Node: []string{"mcpServers"}, Render: renderGemini},
-	"omp":         {File: ".omp/agent/mcp.json", Node: []string{"mcpServers"}, Render: renderClaude},
-	"opencode":    {File: ".config/opencode/opencode.json", Node: []string{"mcp"}, Render: renderOpencode},
-	"zed":         {File: ".config/zed/settings.json", Node: []string{"context_servers"}, Render: renderZed},
+	"claude-code":    {File: ".claude.json", Node: []string{"mcpServers"}, Render: renderClaude},
+	"claude-desktop": {File: claudeDesktopFile(), Node: []string{"mcpServers"}, Render: renderClaudeDesktop, LocalOnly: true},
+	"codex":          {File: ".codex/config.toml", Node: []string{"mcp_servers"}, TOML: true, Render: renderCodex},
+	"crush":          {File: ".config/crush/crush.json", Node: []string{"mcp"}, Render: renderCrush},
+	"cursor":         {File: ".cursor/mcp.json", Node: []string{"mcpServers"}, Render: renderCursor},
+	"gemini-cli":     {File: ".gemini/settings.json", Node: []string{"mcpServers"}, Render: renderGemini},
+	"omp":            {File: ".omp/agent/mcp.json", Node: []string{"mcpServers"}, Render: renderClaude},
+	"opencode":       {File: ".config/opencode/opencode.json", Node: []string{"mcp"}, Render: renderOpencode},
+	"zed":            {File: ".config/zed/settings.json", Node: []string{"context_servers"}, Render: renderZed},
+}
+
+// claudeDesktopFile is the config in Claude Desktop's user data directory.
+func claudeDesktopFile() string {
+	if runtime.GOOS == "darwin" {
+		return "Library/Application Support/Claude/claude_desktop_config.json"
+	}
+	return ".config/Claude/claude_desktop_config.json"
 }
 
 func transport(def catalog.MCP) string {
@@ -63,6 +80,12 @@ func renderClaude(def catalog.MCP) Entry {
 	if def.Timeout > 0 {
 		e.add("timeout", def.Timeout*1000) // milliseconds
 	}
+	return e
+}
+
+func renderClaudeDesktop(def catalog.MCP) Entry {
+	var e Entry
+	commandArgsEnv(&e, def, "env")
 	return e
 }
 

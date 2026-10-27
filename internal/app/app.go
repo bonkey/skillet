@@ -466,8 +466,19 @@ func (a *App) syncMCP(report *SyncReport, enabled []string, sessions []session.S
 			}
 		}
 		desired := map[string]catalog.MCP{}
+		var remote []string
 		for _, name := range servers {
-			desired[name] = *a.Catalog.MCPs[name]
+			def := *a.Catalog.MCPs[name]
+			if mcp.Targets[agent].LocalOnly && def.Type != "local" {
+				remote = append(remote, catalog.MCPPrefix+name)
+				continue
+			}
+			desired[name] = def
+		}
+		if len(remote) > 0 {
+			slices.Sort(remote)
+			report.Notes = append(report.Notes, fmt.Sprintf("%s takes local MCP servers only and does not get %s",
+				agent, strings.Join(slices.Compact(remote), ", ")))
 		}
 		actions, kept, missing, err := mcp.Sync(a.Paths.Home, []string{agent}, desired, expand, state, mcp.Options{DryRun: opt.DryRun, Purge: opt.Purge})
 		report.MCP = append(report.MCP, actions...)

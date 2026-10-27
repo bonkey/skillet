@@ -133,6 +133,9 @@ project: say so, and offer to disable it globally and enable it with `-p` in the
   catalog's definition.
 - An agent loads its servers at start. Tell the user that the change takes effect in the next
   session of that agent.
+- `claude-desktop` takes local servers only; a `note` names the remote servers it leaves out.
+  The user adds those as connectors in claude.ai. Claude Desktop loads its servers when the app
+  starts: tell the user to quit and reopen it.
 - Never ask for, read, print or write a secret value. Secrets come from the user's 1Password
   items or a local file. When a line says `missing-secret mcp:<name> ... no value for <NAME>`, or
   a `note` mentions 1Password, tell the user: they add a field `<NAME>` to their 1Password item,

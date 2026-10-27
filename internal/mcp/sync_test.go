@@ -45,6 +45,7 @@ func TestRenderShapes(t *testing.T) {
 		{"omp", localDef, Entry{{"type", "stdio"}, {"command", "npx"}, {"args", []string{"-y", "simctl-mcp"}}, {"env", localDef.Environment}}},
 		{"omp", remoteDef, Entry{{"type", "http"}, {"url", remoteDef.URL}, {"headers", remoteDef.Headers}}},
 		{"omp", sseDef, Entry{{"type", "sse"}, {"url", sseDef.URL}, {"timeout", 30000.0}}},
+		{"claude-desktop", localDef, Entry{{"command", "npx"}, {"args", []string{"-y", "simctl-mcp"}}, {"env", localDef.Environment}}},
 	}
 	for _, tt := range tests {
 		if got := Targets[tt.agent].Render(tt.def); !reflect.DeepEqual(got, tt.want) {
@@ -270,5 +271,23 @@ func TestSyncAsksForSecretsOnlyWhenAnEntryMayChange(t *testing.T) {
 	}
 	if _, managed := h.state[cursor]["secretive"]; !managed {
 		t.Error("the entry stays managed while its secret is missing")
+	}
+}
+
+func TestSyncWritesClaudeDesktopBesideItsPreferences(t *testing.T) {
+	h := home{t.TempDir(), State{}}
+	config := h.file(Targets["claude-desktop"].File)
+	os.MkdirAll(filepath.Dir(config), 0o755)
+	os.WriteFile(config, []byte("{\n  \"mcpServers\": {},\n  \"preferences\": {\n    \"sidebarMode\": \"chat\"\n  }\n}\n"), 0o600)
+
+	if got := h.sync(t, []string{"claude-desktop"}, map[string]catalog.MCP{"simctl": localDef}, Options{}); len(got) != 1 {
+		t.Fatalf("one entry is added: %v", got)
+	}
+	text := read(t, config)
+	if !strings.Contains(text, `"command": "npx"`) || !strings.Contains(text, `"sidebarMode": "chat"`) {
+		t.Errorf("the server joins the app's own keys:\n%s", text)
+	}
+	if info, _ := os.Stat(config); info.Mode().Perm() != 0o600 {
+		t.Errorf("the config stays private: %v", info.Mode().Perm())
 	}
 }
