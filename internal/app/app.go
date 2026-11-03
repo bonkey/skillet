@@ -63,6 +63,31 @@ func OpenWith(p paths.Paths, client gist.Client) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	return openWith(p, client, local)
+}
+
+// OpenToPull opens the app for a pull, which replaces config.toml. A
+// config.toml that does not load counts as an empty catalog with the gist
+// the file names, and a warning tells why it does not load.
+func OpenToPull(p paths.Paths, client gist.Client) (*App, error) {
+	local, loadErr := catalog.Load(p.ConfigFile())
+	if loadErr == nil {
+		return openWith(p, client, local)
+	}
+	local = catalog.New()
+	local.Gist = catalog.GistOf(p.ConfigFile())
+	a, err := openWith(p, client, local)
+	if a == nil {
+		return nil, err
+	}
+	// The index and the overlay's lists are checked against the empty
+	// stand-in here; the pull checks them again against the pulled catalog.
+	a.Warnings = append(a.Warnings, fmt.Sprintf("%v; the pull replaces the file", loadErr))
+	return a, nil
+}
+
+func openWith(p paths.Paths, client gist.Client, local *catalog.Catalog) (*App, error) {
+	var err error
 	a := &App{Paths: p, Local: local, Gists: client, OnePassword: secrets.OP{}}
 	if a.Overlay, err = catalog.LoadOverlay(p.LocalConfigFile()); err != nil {
 		return nil, err

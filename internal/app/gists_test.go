@@ -135,6 +135,45 @@ func TestPushAndPull(t *testing.T) {
 	}
 }
 
+func TestPullReplacesACatalogThatDoesNotLoad(t *testing.T) {
+	e := setup(t)
+	gists := &fakeGists{files: map[string]string{}}
+	e.app.Gists = gists
+	e.add(t, true)
+	id, _, err := e.app.Push(false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The same source twice, as a merge of two copies of the file can leave it.
+	broken := fmt.Sprintf("gist = %q\n\n[[skills]]\nurl = %q\n\n[[skills]]\nurl = %q\n", id, e.origin, e.origin)
+	write(t, e.p.ConfigFile(), broken)
+	// The overlay names a skill that only the pulled catalog holds.
+	write(t, e.p.LocalConfigFile(), "disabled = ['beta']\n")
+	if _, err := OpenWith(e.p, gists); err == nil {
+		t.Fatal("other commands must refuse a catalog that does not load")
+	}
+	a, err := OpenToPull(e.p, gists)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(a.Warnings) != 1 || !strings.Contains(a.Warnings[0], e.p.ConfigFile()) {
+		t.Errorf("warnings: %q", a.Warnings)
+	}
+	if _, err := a.Pull(""); err != nil {
+		t.Fatalf("the pull should find the gist in the file that does not load: %v", err)
+	}
+	if _, err := OpenWith(e.p, gists); err != nil {
+		t.Errorf("the pulled catalog should load: %v", err)
+	}
+	if got := a.Declared(a.Global()).Skills; !reflect.DeepEqual(got, []string{"alpha"}) {
+		t.Errorf("the overlay should apply to the pulled catalog: %v", got)
+	}
+	if backup := read(t, e.p.ConfigFile()+".bak"); backup != broken {
+		t.Errorf("the replaced file should be kept as it was:\n%s", backup)
+	}
+}
+
 func TestIncludesMergeOnceAndSurviveCycles(t *testing.T) {
 	e := setup(t)
 	gists := &fakeGists{files: map[string]string{

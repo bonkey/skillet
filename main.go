@@ -16,6 +16,7 @@ import (
 
 	"github.com/bonkey/skillet/internal/app"
 	"github.com/bonkey/skillet/internal/catalog"
+	"github.com/bonkey/skillet/internal/gist"
 	"github.com/bonkey/skillet/internal/link"
 	"github.com/bonkey/skillet/internal/mcp"
 	"github.com/bonkey/skillet/internal/paths"
@@ -51,12 +52,20 @@ func main() {
 	}
 }
 
-func open() (*app.App, error) {
+func open() (*app.App, error) { return openBy(app.Open) }
+
+// openToPull opens the app for `gist pull`, which also replaces a
+// config.toml that does not load.
+func openToPull() (*app.App, error) {
+	return openBy(func(p paths.Paths) (*app.App, error) { return app.OpenToPull(p, gist.GH{}) })
+}
+
+func openBy(opener func(paths.Paths) (*app.App, error)) (*app.App, error) {
 	p, err := paths.Default()
 	if err != nil {
 		return nil, err
 	}
-	a, err := app.Open(p)
+	a, err := opener(p)
 	if err == nil {
 		a.Force = force
 		for _, name := range agents {
@@ -1221,9 +1230,9 @@ so gists that include each other do no harm.`,
 	push.Flags().BoolVar(&fresh, "new", false, "create a new gist even when the catalog already has one")
 	push.Flags().BoolVar(&public, "public", false, "make a newly created gist public")
 
-	act := func(fn func(a *app.App, args []string) (string, error), done string) func(*cobra.Command, []string) error {
+	act := func(opener func() (*app.App, error), fn func(a *app.App, args []string) (string, error), done string) func(*cobra.Command, []string) error {
 		return func(cmd *cobra.Command, args []string) error {
-			a, err := open()
+			a, err := opener()
 			if err != nil {
 				return err
 			}
@@ -1243,8 +1252,11 @@ so gists that include each other do no harm.`,
 		&cobra.Command{
 			Use:   "pull [<gist>]",
 			Short: "Replace the catalog with the one in a gist; the replaced file is saved as config.toml.bak",
-			Args:  cobra.MaximumNArgs(1),
-			RunE: act(func(a *app.App, args []string) (string, error) {
+			Long: `Replace the catalog with the one in a gist, by default the gist config.toml names, then
+fetch what is missing and sync the global links. The replaced file is saved as config.toml.bak.
+A config.toml that does not load is replaced too; the pull still finds the gist it names.`,
+			Args: cobra.MaximumNArgs(1),
+			RunE: act(openToPull, func(a *app.App, args []string) (string, error) {
 				return a.Pull(strings.Join(args, ""))
 			}, "pulled gist %s"),
 		},
@@ -1252,13 +1264,13 @@ so gists that include each other do no harm.`,
 			Use:   "include <gist>",
 			Short: "Merge the catalog of another gist into yours",
 			Args:  cobra.ExactArgs(1),
-			RunE:  act(func(a *app.App, args []string) (string, error) { return a.Include(args[0]) }, "included gist %s"),
+			RunE:  act(open, func(a *app.App, args []string) (string, error) { return a.Include(args[0]) }, "included gist %s"),
 		},
 		&cobra.Command{
 			Use:   "exclude <gist>",
 			Short: "Stop including a gist",
 			Args:  cobra.ExactArgs(1),
-			RunE:  act(func(a *app.App, args []string) (string, error) { return a.Exclude(args[0]) }, "excluded gist %s"),
+			RunE:  act(open, func(a *app.App, args []string) (string, error) { return a.Exclude(args[0]) }, "excluded gist %s"),
 		},
 		&cobra.Command{
 			Use:   "list",

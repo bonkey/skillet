@@ -276,7 +276,8 @@ item = "klmnopqrst"
   merges other catalogs into yours. Your own entries win a name clash, then the earlier include.
   Gists may include gists; each takes part once, so cycles are harmless. The `secrets` of an
   included gist are ignored. `config.local.toml` stays on the machine: `gist push` does not send
-  it and `gist pull` does not touch it.
+  it and `gist pull` does not touch it. `gist pull` also replaces a `config.toml` that does not
+  load, such as one that lists a source twice, using the gist that file names.
 
 ### Local overrides
 

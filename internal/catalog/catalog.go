@@ -207,6 +207,18 @@ func Load(file string) (*Catalog, error) {
 	return c, nil
 }
 
+// GistOf reads the gist a catalog file names, also from a file that does
+// not load as a catalog; "" when the file names none or is not TOML.
+func GistOf(file string) string {
+	var f struct {
+		Gist string `toml:"gist"`
+	}
+	if data, err := os.ReadFile(file); err == nil && toml.Unmarshal(data, &f) == nil {
+		return f.Gist
+	}
+	return ""
+}
+
 // LoadOverlay reads the file that overrides the catalog on this machine;
 // nil without one.
 func LoadOverlay(file string) (*Catalog, error) {
