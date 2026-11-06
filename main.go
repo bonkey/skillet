@@ -1074,7 +1074,11 @@ func printView(view app.View, descriptions bool) {
 			mark = "!"
 		}
 		if pack.From != "" {
-			name += " (" + app.OriginName(short(pack.From)) + ")"
+			from := pack.From
+			if from != paths.ManifestName {
+				from = short(from)
+			}
+			name += " (" + app.OriginName(from) + ")"
 		}
 		if descriptions {
 			fmt.Printf("\n%s%s  %s\n", mark, name, pack.Description)

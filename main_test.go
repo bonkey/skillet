@@ -225,6 +225,33 @@ func TestPrintViewLeavesOutDescriptions(t *testing.T) {
 	}
 }
 
+func TestPrintViewNamesTheOriginOfAPack(t *testing.T) {
+	view := app.View{
+		Packs: []app.PackView{
+			{Name: "team", Skills: []string{"lint"}, From: paths.ManifestName},
+			{Name: "web", Skills: []string{"css"}, From: "0123456789abcdef"},
+		},
+		Skills: map[string]app.SkillView{
+			"lint": {Name: "lint"},
+			"css":  {Name: "css"},
+		},
+	}
+	got := output(t, func() { printView(view, false) })
+	want := strings.Join([]string{
+		listLegend,
+		"",
+		"!@team (project)",
+		"  --! lint",
+		"",
+		"!@web (gist 01234567)",
+		"  --! css",
+		"",
+	}, "\n")
+	if got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 func TestPrintTablesListsOffPacksAndUnmanagedEntries(t *testing.T) {
 	agents := []string{"claude-code", "codex"}
 	skills := []app.Row{
