@@ -128,6 +128,7 @@ skillet status                           # every skill and server with its state
 skillet status --unmanaged               # and those skillet does not manage
 skillet list 'swift|ios' --enabled       # search names and descriptions; terms may be regexps
 skillet list '^mattpocock-skills/skills/engineering/'  # and the skills' folders, as status prints them
+skillet list --names                     # only states and names, without descriptions and server commands
 skillet sources                          # every source with the ref it tracks and its commit
 skillet update                           # fetch all sources, report changed skills
 skillet --agents codex enable @craft     # act on these agents instead of those in the config

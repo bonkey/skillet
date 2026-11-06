@@ -1002,7 +1002,7 @@ with --dry-run first.`,
 }
 
 func listCmd() *cobra.Command {
-	var enabledOnly, asJSON bool
+	var enabledOnly, asJSON, namesOnly bool
 	var pack string
 	cmd := &cobra.Command{
 		Use:   "list [term...]",
@@ -1018,7 +1018,8 @@ the clones, as status prints it. A term may be a regular expression:
   skillet list 'swift|ios|xcode'  # any of them
   skillet list mattpocock-skills/skills/engine          # part of a folder
   skillet list '^mattpocock-skills/.*/(tdd|triage)$'    # a whole folder
-  skillet list --enabled review   # combined with the other filters`,
+  skillet list --enabled review   # combined with the other filters
+  skillet list --names swift      # without descriptions and server commands`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := open()
 			if err != nil {
@@ -1034,17 +1035,18 @@ the clones, as status prints it. A term may be a regular expression:
 				out.SetIndent("", "  ")
 				return out.Encode(view)
 			}
-			printView(view)
+			printView(view, !namesOnly)
 			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&enabledOnly, "enabled", false, "only skills enabled globally or in the project")
 	cmd.Flags().StringVar(&pack, "pack", "", "only this pack")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON")
+	cmd.Flags().BoolVarP(&namesOnly, "names", "n", false, "only states and names, without descriptions and server commands or URLs")
 	return cmd
 }
 
-func printView(view app.View) {
+func printView(view app.View, descriptions bool) {
 	width := 100
 	if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 40 {
 		width = w
@@ -1054,6 +1056,16 @@ func printView(view app.View) {
 		return
 	}
 	fmt.Println("G = enabled globally, P = enabled in this project, ! = no description, ? = missing from its source, or a server without its secrets")
+	row := func(flags []byte, name, text string) {
+		line := fmt.Sprintf("  %s %s", flags, name)
+		if descriptions {
+			line = fmt.Sprintf("  %s %-30s %s", flags, name, text)
+		}
+		if runes := []rune(line); len(runes) > width {
+			line = string(runes[:width-1]) + "…"
+		}
+		fmt.Println(line)
+	}
 	for _, pack := range view.Packs {
 		name, mark := "@"+pack.Name, " "
 		if pack.Name == app.NoPack {
@@ -1064,7 +1076,11 @@ func printView(view app.View) {
 		if pack.From != "" {
 			name += " (" + app.OriginName(short(pack.From)) + ")"
 		}
-		fmt.Printf("\n%s%s  %s\n", mark, name, pack.Description)
+		if descriptions {
+			fmt.Printf("\n%s%s  %s\n", mark, name, pack.Description)
+		} else {
+			fmt.Printf("\n%s%s\n", mark, name)
+		}
 		for _, skillName := range pack.Skills {
 			skill := view.Skills[skillName]
 			flags := []byte("-- ")
@@ -1079,11 +1095,7 @@ func printView(view app.View) {
 			} else if skill.Description == "" {
 				flags[2] = '!'
 			}
-			line := fmt.Sprintf("  %s %-30s %s", flags, skill.Name, skill.Description)
-			if runes := []rune(line); len(runes) > width {
-				line = string(runes[:width-1]) + "…"
-			}
-			fmt.Println(line)
+			row(flags, skill.Name, skill.Description)
 		}
 		for _, name := range pack.MCPs {
 			server := view.MCPs[name]
@@ -1094,11 +1106,7 @@ func printView(view app.View) {
 			if len(server.MissingSecrets) > 0 {
 				flags[2] = '?'
 			}
-			line := fmt.Sprintf("  %s %-30s %s", flags, "mcp:"+server.Name, server.Target)
-			if runes := []rune(line); len(runes) > width {
-				line = string(runes[:width-1]) + "…"
-			}
-			fmt.Println(line)
+			row(flags, "mcp:"+server.Name, server.Target)
 		}
 	}
 }

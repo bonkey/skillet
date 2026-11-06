@@ -162,6 +162,69 @@ func TestPrintTablesNamesSkillsInFoldersOfAnotherName(t *testing.T) {
 	}
 }
 
+var listView = app.View{
+	Packs: []app.PackView{
+		{Name: "ios", Description: "Apple platforms", Skills: []string{"hig", "swift"}, MCPs: []string{"xcode"}},
+		{Name: "web", Skills: []string{"css"}, From: "0123456789abcdef"},
+		{Name: app.NoPack, Skills: []string{"lone"}},
+	},
+	Skills: map[string]app.SkillView{
+		"hig":   {Name: "hig", Description: "Human interface guidelines", Global: true},
+		"swift": {Name: "swift", Project: true, Missing: true},
+		"css":   {Name: "css", Global: true, Project: true},
+		"lone":  {Name: "lone", Description: "Alone"},
+	},
+	MCPs: map[string]app.MCPView{
+		"xcode": {Name: "xcode", Target: "xcrun mcpbridge", Global: true, MissingSecrets: []string{"TOKEN"}},
+	},
+}
+
+const listLegend = "G = enabled globally, P = enabled in this project, ! = no description, ? = missing from its source, or a server without its secrets"
+
+func TestPrintViewListsPacksWithDescriptions(t *testing.T) {
+	got := output(t, func() { printView(listView, true) })
+	want := strings.Join([]string{
+		listLegend,
+		"",
+		" @ios  Apple platforms",
+		"  G-  hig                            Human interface guidelines",
+		"  -P? swift                          ",
+		"  G ? mcp:xcode                      xcrun mcpbridge",
+		"",
+		"!@web (gist 01234567)  ",
+		"  GP! css                            ",
+		"",
+		" (no pack)  ",
+		"  --  lone                           Alone",
+		"",
+	}, "\n")
+	if got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestPrintViewLeavesOutDescriptions(t *testing.T) {
+	got := output(t, func() { printView(listView, false) })
+	want := strings.Join([]string{
+		listLegend,
+		"",
+		" @ios",
+		"  G-  hig",
+		"  -P? swift",
+		"  G ? mcp:xcode",
+		"",
+		"!@web (gist 01234567)",
+		"  GP! css",
+		"",
+		" (no pack)",
+		"  --  lone",
+		"",
+	}, "\n")
+	if got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 func TestPrintTablesListsOffPacksAndUnmanagedEntries(t *testing.T) {
 	agents := []string{"claude-code", "codex"}
 	skills := []app.Row{
