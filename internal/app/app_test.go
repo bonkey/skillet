@@ -185,6 +185,25 @@ func TestToggleTakesSkillFoldersAsStatusPrintsThem(t *testing.T) {
 	}
 }
 
+func TestMatchingFindsSkillsByARegexpOverTheirFolders(t *testing.T) {
+	e := setup(t)
+	e.add(t, true)
+	got, err := e.app.Matching(`^skills/skills/(al|be)`)
+	slices.Sort(got)
+	if err != nil || !reflect.DeepEqual(got, []string{"alpha", "beta"}) {
+		t.Fatalf("matching: %v %v", got, err)
+	}
+	if got, err := e.app.Matching(`ta$`); err != nil || !reflect.DeepEqual(got, []string{"beta"}) {
+		t.Fatalf("an unanchored start: %v %v", got, err)
+	}
+	if _, err := e.app.Matching(`^alpha`); err == nil || !strings.Contains(err.Error(), "^alpha") {
+		t.Fatalf("an expression that matches no folder is an error: %v", err)
+	}
+	if _, err := e.app.Matching(`skills/(`); err == nil {
+		t.Fatal("an invalid expression is an error")
+	}
+}
+
 func TestSyncEnablesWhatIsDeclaredAndFlagsTheRest(t *testing.T) {
 	e := setup(t)
 	global := filepath.Join(e.p.Home, ".claude", "skills")

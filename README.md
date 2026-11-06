@@ -114,6 +114,7 @@ skillet edit --sync                      # open config.toml in $VISUAL or $EDITO
 skillet enable @craft                    # a whole pack, globally: its skills and its servers
 skillet disable top-design mcp:simctl-mcp  # single members of it
 skillet disable mattpocock-skills/skills/engine  # every skill whose folder, as status prints it, starts so
+skillet disable --regex 'engineering/(tdd|implement)$'  # every skill whose folder the expression matches
 skillet disable --save @craft            # and switch it off in the config, so sync keeps it off
 skillet enable -p @craft                 # in this project
 skillet run @craft -- claude             # only while the command runs

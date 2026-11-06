@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -664,6 +665,25 @@ func (a *App) byFolder(names []string) ([]string, error) {
 		default:
 			return nil, fmt.Errorf("no skill in a folder that starts with %q", name)
 		}
+	}
+	return out, nil
+}
+
+// Matching returns the skills whose folder inside the clones, as status
+// prints it, the regular expression matches.
+func (a *App) Matching(expr string) ([]string, error) {
+	re, err := regexp.Compile(expr)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, skill := range a.Catalog.SkillNames() {
+		if re.MatchString(a.labelOf(skill)) {
+			out = append(out, skill)
+		}
+	}
+	if out == nil {
+		return nil, fmt.Errorf("no skill in a folder that matches %q", expr)
 	}
 	return out, nil
 }

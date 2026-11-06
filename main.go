@@ -803,7 +803,7 @@ placeholders and kept in secrets.toml. Review with --dry-run first.`,
 }
 
 func toggleCmd(enable bool) *cobra.Command {
-	var save bool
+	var save, regex bool
 	use, short := "disable", "Disable skills, servers, packs and sources in a scope"
 	if enable {
 		use, short = "enable", "Enable skills, servers, packs and sources in a scope"
@@ -814,7 +814,9 @@ func toggleCmd(enable bool) *cobra.Command {
 A name with a "/" is a skill's folder inside the clones, as status prints it,
 such as mattpocock-skills/skills/engineering/tdd: it takes the skill in that
 folder, or else every skill whose folder starts with it, so
-mattpocock-skills/skills/engine takes all of skills/engineering.
+mattpocock-skills/skills/engine takes all of skills/engineering. With
+--regex, every argument is a regular expression instead, and takes every skill
+whose folder it matches anywhere: 'skills/engineering/(tdd|implement)$'.
 
 Only links and the agents' MCP entries change. With --save, the "enabled"
 flag of the named entries in the scope's config file changes too, so the
@@ -822,6 +824,7 @@ next sync keeps the result; without it, what the file switches on comes
 back with the next sync.`}
 	scope := scopeFlags(cmd)
 	cmd.Flags().BoolVarP(&save, "save", "s", false, "also write the flag into the scope's config file")
+	cmd.Flags().BoolVarP(&regex, "regex", "r", false, "take every argument as a regular expression over the skills' folders")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		a, err := open()
 		if err != nil {
@@ -831,7 +834,18 @@ back with the next sync.`}
 		if err != nil {
 			return err
 		}
-		report, err := a.Toggle(s, enable, save, args...)
+		names := args
+		if regex {
+			names = nil
+			for _, expr := range args {
+				skills, err := a.Matching(expr)
+				if err != nil {
+					return err
+				}
+				names = append(names, skills...)
+			}
+		}
+		report, err := a.Toggle(s, enable, save, names...)
 		printSync(a, report)
 		if err == nil && len(report.Actions)+len(report.MCP)+len(report.Missing)+len(report.MissingSecrets) == 0 {
 			fmt.Println("nothing to change in", tilde(s.String()))

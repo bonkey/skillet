@@ -108,7 +108,9 @@ project: say so, and offer to disable it globally and enable it with `-p` in the
 
    Disabling one skill of a pack leaves the pack's other skills enabled. A name with a `/` is a
    skill's folder inside the clones, as `status` prints it: it takes the skill in that folder, or
-   else every skill whose folder starts with it.
+   else every skill whose folder starts with it. With `--regex`, every argument is a regular
+   expression instead and takes every skill whose folder it matches anywhere; quote it for the
+   shell.
 
 4. Read the output. It lists only what changed, in two tables headed by the scope: `skills` with
    one row per skill, named by its folder inside the clones and, when the folder has another name,
