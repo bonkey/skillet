@@ -430,9 +430,9 @@ func TestViewFilter(t *testing.T) {
 			{Name: "git", Description: "Version control", Skills: []string{"pr", "rebase"}},
 		},
 		Skills: map[string]SkillView{
-			"docc":   {Name: "docc", Description: "Swift DocC documentation markup", Global: true},
-			"pr":     {Name: "pr", Description: "Create and update pull requests"},
-			"rebase": {Name: "rebase", Description: "Rebase a branch and resolve conflicts", Project: true},
+			"docc":   {Name: "docc", Folder: "acme/apple/docc", Description: "Swift DocC documentation markup", Global: true},
+			"pr":     {Name: "pr", Folder: "acme/git/pull-request", Description: "Create and update pull requests"},
+			"rebase": {Name: "rebase", Folder: "tools/rebase", Description: "Rebase a branch and resolve conflicts", Project: true},
 		},
 	}
 	names := func(v View) []string {
@@ -458,6 +458,8 @@ func TestViewFilter(t *testing.T) {
 		{"a pack's name and description count for its skills", "", false, []string{"ios"}, []string{"apple/docc", "apple/pr"}},
 		{"combined with enabled and pack", "git", true, []string{"re"}, []string{"git/rebase"}},
 		{"a term that is no regular expression is taken literally", "", false, []string{"(pull"}, nil},
+		{"part of a skill's folder", "", false, []string{"acme/git/pu"}, []string{"apple/pr", "git/pr"}},
+		{"a regular expression over the folder", "", false, []string{"^acme/.*/docc$"}, []string{"apple/docc"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -718,6 +720,27 @@ func TestRunEnablesSkillsOnlyWhileTheCommandRuns(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(e.p.Cwd, paths.ManifestName)); !os.IsNotExist(err) {
 		t.Error("run must not create a manifest")
+	}
+}
+
+func TestRunTakesSkillFolders(t *testing.T) {
+	e := setup(t)
+	e.add(t, false)
+	linkPath := filepath.Join(e.p.Cwd, ".claude", "skills", "alpha")
+	if code, err := e.app.Run([]string{"skills/skills/al"}, []string{"test", "-L", linkPath}); err != nil || code != 0 {
+		t.Fatalf("a folder prefix takes the skills below it: %d %v", code, err)
+	}
+	if _, err := e.app.Run([]string{"skills/other"}, []string{"true"}); err == nil || !strings.Contains(err.Error(), "skills/other") {
+		t.Fatalf("a folder that holds no skill is an error: %v", err)
+	}
+}
+
+func TestViewGivesEachSkillItsFolder(t *testing.T) {
+	e := setup(t)
+	e.add(t, false)
+	view, err := e.app.View()
+	if err != nil || view.Skills["alpha"].Folder != "skills/skills/alpha" {
+		t.Fatalf("folder of alpha: %+v %v", view.Skills["alpha"], err)
 	}
 }
 

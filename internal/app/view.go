@@ -23,6 +23,7 @@ const NoPack = ""
 type SkillView struct {
 	Name        string   `json:"name"`
 	Source      string   `json:"source"`
+	Folder      string   `json:"folder,omitempty"` // inside the clones, as status prints it; empty when no clone holds it
 	Packs       []string `json:"packs"`
 	Description string   `json:"description"`
 	Global      bool     `json:"global"`
@@ -83,6 +84,9 @@ func (a *App) View() (View, error) {
 			Name: name, Source: source, Packs: a.Catalog.PacksOf(name), Description: found.Description,
 			Global: slices.Contains(global, name), Project: slices.Contains(project, name), Missing: !ok,
 			From: a.Catalog.SkillOrigin[name], Ref: a.Catalog.Sources[source].Ref,
+		}
+		if ok {
+			skill.Folder = a.labelOf(name)
 		}
 		if indexed, ok := a.Index.Sources[source]; ok {
 			skill.Commit = indexed.Head
@@ -157,7 +161,8 @@ func (a *App) Sources() []SourceView {
 // servers that match every term. A term is a case-insensitive regular
 // expression, or plain text when it does not compile. It is matched against
 // the entry's name and description (for a server: its command or URL) and
-// the name and description of its pack. Packs left empty are dropped once
+// the name and description of its pack, and on its own against a skill's
+// folder, so ^ and $ anchor to the folder. Packs left empty are dropped once
 // any filter applies.
 func (v View) Filter(pack string, enabledOnly bool, terms []string) View {
 	var patterns []*regexp.Regexp
@@ -168,9 +173,11 @@ func (v View) Filter(pack string, enabledOnly bool, terms []string) View {
 		}
 		patterns = append(patterns, re)
 	}
-	matches := func(fields ...string) bool {
+	matches := func(folder string, fields ...string) bool {
 		text := strings.Join(fields, " ")
-		return !slices.ContainsFunc(patterns, func(re *regexp.Regexp) bool { return !re.MatchString(text) })
+		return !slices.ContainsFunc(patterns, func(re *regexp.Regexp) bool {
+			return !re.MatchString(text) && (folder == "" || !re.MatchString(folder))
+		})
 	}
 	filtering := enabledOnly || len(patterns) > 0
 	out := View{Project: v.Project, Skills: map[string]SkillView{}, MCPs: map[string]MCPView{}}
@@ -184,7 +191,7 @@ func (v View) Filter(pack string, enabledOnly bool, terms []string) View {
 			if enabledOnly && !skill.Global && !skill.Project {
 				continue
 			}
-			if matches(skill.Name, skill.Description, p.Name, p.Description) {
+			if matches(skill.Folder, skill.Name, skill.Description, p.Name, p.Description) {
 				skills = append(skills, name)
 				out.Skills[name] = skill
 			}
@@ -194,7 +201,7 @@ func (v View) Filter(pack string, enabledOnly bool, terms []string) View {
 			if enabledOnly && !server.Global {
 				continue
 			}
-			if matches(server.Name, "mcp", server.Target, p.Name, p.Description) {
+			if matches("", server.Name, "mcp", server.Target, p.Name, p.Description) {
 				servers = append(servers, name)
 				out.MCPs[name] = server
 			}

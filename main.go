@@ -836,13 +836,8 @@ back with the next sync.`}
 		}
 		names := args
 		if regex {
-			names = nil
-			for _, expr := range args {
-				skills, err := a.Matching(expr)
-				if err != nil {
-					return err
-				}
-				names = append(names, skills...)
+			if names, err = byRegex(a, args); err != nil {
+				return err
 			}
 		}
 		report, err := a.Toggle(s, enable, save, names...)
@@ -853,6 +848,20 @@ back with the next sync.`}
 		return err
 	}
 	return cmd
+}
+
+// byRegex takes every argument as a regular expression over the skills'
+// folders inside the clones and returns the skills they match.
+func byRegex(a *app.App, exprs []string) ([]string, error) {
+	var names []string
+	for _, expr := range exprs {
+		skills, err := a.Matching(expr)
+		if err != nil {
+			return nil, err
+		}
+		names = append(names, skills...)
+	}
+	return names, nil
 }
 
 func statusCmd() *cobra.Command {
@@ -1002,10 +1011,13 @@ func listCmd() *cobra.Command {
 
 With terms, only skills that match every term are listed. A term is matched,
 ignoring case, against the skill's name and description and against the name
-and description of its pack. A term may be a regular expression:
+and description of its pack, and on its own against the skill's folder inside
+the clones, as status prints it. A term may be a regular expression:
 
   skillet list pull request       # both words
   skillet list 'swift|ios|xcode'  # any of them
+  skillet list mattpocock-skills/skills/engine          # part of a folder
+  skillet list '^mattpocock-skills/.*/(tdd|triage)$'    # a whole folder
   skillet list --enabled review   # combined with the other filters`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := open()
@@ -1141,10 +1153,16 @@ applied, and missing clones are created.`,
 }
 
 func runCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "run [skill|mcp:server|@pack|skills:source]... -- <command> [args...]",
+	var regex bool
+	cmd := &cobra.Command{
+		Use:   "run [skill|mcp:server|@pack|skills:source|folder]... -- <command> [args...]",
 		Short: "Enable skills in the project for as long as a command runs",
-		Args:  cobra.MinimumNArgs(1),
+		Long: `Enable skills in the project for as long as a command runs.
+
+It takes the names enable takes: a name with a "/" is a skill's folder inside
+the clones, as status prints it, or the start of one, and with --regex every
+name is a regular expression over those folders.`,
+		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dash := cmd.ArgsLenAtDash()
 			if dash < 0 || dash == len(args) {
@@ -1154,7 +1172,13 @@ func runCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			code, err := a.Run(args[:dash], args[dash:])
+			names := args[:dash]
+			if regex {
+				if names, err = byRegex(a, names); err != nil {
+					return err
+				}
+			}
+			code, err := a.Run(names, args[dash:])
 			if err != nil {
 				return err
 			}
@@ -1164,6 +1188,8 @@ func runCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVarP(&regex, "regex", "r", false, "take every name as a regular expression over the skills' folders")
+	return cmd
 }
 
 // short abbreviates a commit hash or gist id.

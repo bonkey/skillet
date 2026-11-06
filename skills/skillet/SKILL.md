@@ -24,9 +24,10 @@ skillet list --json 'swift|ios|xcode'    # any of these words
 skillet list --json pull request         # every word
 ```
 
-Terms match names and descriptions of skills and of their packs, ignoring case, and may be regular
-expressions. Try several words for the same need. In the result, `skills` holds the matching
-skills keyed by name, and `global` and `project` tell whether a match is enabled. `mcps` holds the
+Terms match names and descriptions of skills and of their packs, and the skills' folders inside
+the clones, ignoring case, and may be regular expressions. Try several words for the same need. In
+the result, `skills` holds the matching skills keyed by name, with `folder` as `status` prints it,
+and `global` and `project` tell whether a match is enabled. `mcps` holds the
 matching servers the same way, with their command or URL as `target`.
 
 1. A match that is disabled: enable it (see Workflow), and tell the user which skill you picked and why.
@@ -160,8 +161,8 @@ through skillet:
 skillet run @ios -- claude
 ```
 
-The skills are linked, and the pack's servers written into that agent's user config, while the
-command runs; both are undone when it exits. An agent cannot apply this to the session it is
+`run` takes the names `enable` takes, folders and `--regex` included. The skills are linked, and
+the pack's servers written into that agent's user config, while the command runs; both are undone when it exits. An agent cannot apply this to the session it is
 running in; suggest the command to the user.
 
 ## Troubleshooting

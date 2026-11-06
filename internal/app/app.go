@@ -988,6 +988,10 @@ func agentOf(command string) string {
 // starts, or of every configured agent when it starts none of them. What
 // was enabled before stays enabled afterwards.
 func (a *App) Run(names []string, argv []string) (int, error) {
+	names, err := a.byFolder(names)
+	if err != nil {
+		return 1, err
+	}
 	var set catalog.Set
 	if err := a.Catalog.Enable(&set, names...); err != nil {
 		return 1, err

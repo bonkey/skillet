@@ -117,7 +117,7 @@ skillet disable mattpocock-skills/skills/engine  # every skill whose folder, as 
 skillet disable --regex 'engineering/(tdd|implement)$'  # every skill whose folder the expression matches
 skillet disable --save @craft            # and switch it off in the config, so sync keeps it off
 skillet enable -p @craft                 # in this project
-skillet run @craft -- claude             # only while the command runs
+skillet run @craft -- claude             # only while the command runs; takes folders and --regex too
 skillet sync                             # enable what the config files switch on, repair the links
 skillet sync --clean                     # and disable what they switch off
 skillet sync --purge                     # and delete the skills and servers skillet does not manage
@@ -127,6 +127,7 @@ skillet sync --disable-all               # disable everything skillet manages
 skillet status                           # every skill and server with its state per agent
 skillet status --unmanaged               # and those skillet does not manage
 skillet list 'swift|ios' --enabled       # search names and descriptions; terms may be regexps
+skillet list '^mattpocock-skills/skills/engineering/'  # and the skills' folders, as status prints them
 skillet sources                          # every source with the ref it tracks and its commit
 skillet update                           # fetch all sources, report changed skills
 skillet --agents codex enable @craft     # act on these agents instead of those in the config
