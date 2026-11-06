@@ -31,6 +31,9 @@ func TestRenderShapes(t *testing.T) {
 		{"codex", sseDef, Entry{{"url", sseDef.URL}, {"tool_timeout_sec", 30.0}, {"disabled_tools", []string{"danger"}}}},
 		{"opencode", sseDef, Entry{{"type", "remote"}, {"url", sseDef.URL}, {"timeout", 30000.0}, {"enabled", true}}},
 		{"zed", sseDef, Entry{{"enabled", true}, {"url", sseDef.URL}, {"timeout", 30.0}}},
+		{"vibe", localDef, Entry{{"transport", "stdio"}, {"command", "npx"}, {"args", []string{"-y", "simctl-mcp"}}, {"env", localDef.Environment}}},
+		{"vibe", remoteDef, Entry{{"transport", "streamable-http"}, {"url", remoteDef.URL}, {"auth.type", "static"}, {"auth.headers", remoteDef.Headers}}},
+		{"vibe", sseDef, Entry{{"transport", "streamable-http"}, {"url", sseDef.URL}, {"tool_timeout_sec", 30.0}, {"disabled_tools", []string{"danger"}}}},
 		{"cursor", localDef, Entry{{"command", "npx"}, {"args", []string{"-y", "simctl-mcp"}}, {"env", localDef.Environment}}},
 		{"cursor", remoteDef, Entry{{"url", remoteDef.URL}, {"headers", remoteDef.Headers}}},
 		{"gemini-cli", remoteDef, Entry{{"httpUrl", remoteDef.URL}, {"headers", remoteDef.Headers}}},
@@ -92,7 +95,7 @@ func TestSyncWritesEveryAgentAndRemovesOnlyItsOwn(t *testing.T) {
 	claude := h.file(".claude.json")
 	original := "{\n  \"numStartups\": 7,\n  \"mcpServers\": {\n    \"mine\": {\n      \"type\": \"http\",\n      \"url\": \"https://mine\"\n    }\n  }\n}\n"
 	os.WriteFile(claude, []byte(original), 0o644)
-	agents := []string{"claude-code", "codex", "omp", "pi", "zed"}
+	agents := []string{"claude-code", "codex", "omp", "pi", "vibe", "zed"}
 	desired := map[string]catalog.MCP{"simctl": localDef, "remote": remoteDef}
 
 	got := h.sync(t, agents, desired, Options{})
@@ -101,6 +104,7 @@ func TestSyncWritesEveryAgentAndRemovesOnlyItsOwn(t *testing.T) {
 		".codex/config.toml#remote": OpAdd, ".codex/config.toml#simctl": OpAdd,
 		".config/zed/settings.json#remote": OpAdd, ".config/zed/settings.json#simctl": OpAdd,
 		".omp/agent/mcp.json#remote": OpAdd, ".omp/agent/mcp.json#simctl": OpAdd,
+		".vibe/config.toml#remote": OpAdd, ".vibe/config.toml#simctl": OpAdd,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("first sync: %v", got)
@@ -108,19 +112,22 @@ func TestSyncWritesEveryAgentAndRemovesOnlyItsOwn(t *testing.T) {
 	if text := read(t, h.file(".codex/config.toml")); !strings.Contains(text, "[mcp_servers.simctl.env]\nKEY = \"secret-value\"") {
 		t.Errorf("codex config:\n%s", text)
 	}
+	if text := read(t, h.file(".vibe/config.toml")); !strings.Contains(text, "[[mcp_servers]]\nname = \"remote\"\ntransport = \"streamable-http\"\nurl = \"https://mcp.example.com/mcp\"\nauth.type = \"static\"\nauth.headers = { Authorization = \"Bearer abc\" }") {
+		t.Errorf("vibe config:\n%s", text)
+	}
 	if info, _ := os.Stat(h.file(".codex/config.toml")); info.Mode().Perm() != 0o600 {
 		t.Errorf("a new config file is private: %v", info.Mode().Perm())
 	}
 	if info, _ := os.Stat(claude); info.Mode().Perm() != 0o644 {
 		t.Errorf("an existing file keeps its mode: %v", info.Mode().Perm())
 	}
-	if actions, kept, _, err := Sync(h.dir, agents, desired, asIs, h.state, Options{}); err != nil || len(actions) != 0 || len(kept) != 8 || kept[0].Op != OpKeep {
+	if actions, kept, _, err := Sync(h.dir, agents, desired, asIs, h.state, Options{}); err != nil || len(actions) != 0 || len(kept) != 10 || kept[0].Op != OpKeep {
 		t.Fatalf("second sync must be a no-op that reports every entry as kept: %v %v %v", actions, kept, err)
 	}
 
 	got = h.sync(t, agents, map[string]catalog.MCP{"remote": remoteDef}, Options{})
 	want = map[string]string{".claude.json#simctl": OpRemove, ".codex/config.toml#simctl": OpRemove, ".config/zed/settings.json#simctl": OpRemove,
-		".omp/agent/mcp.json#simctl": OpRemove}
+		".omp/agent/mcp.json#simctl": OpRemove, ".vibe/config.toml#simctl": OpRemove}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("a server that is no longer desired goes: %v", got)
 	}
@@ -130,6 +137,56 @@ func TestSyncWritesEveryAgentAndRemovesOnlyItsOwn(t *testing.T) {
 	}
 	if len(h.state) != 0 {
 		t.Errorf("state should be empty: %v", h.state)
+	}
+}
+
+func TestSyncVibeTakesOverArrayElements(t *testing.T) {
+	h := home{t.TempDir(), State{}}
+	vibe := h.file(".vibe/config.toml")
+	os.MkdirAll(filepath.Dir(vibe), 0o755)
+	os.WriteFile(vibe, []byte(`# Vibe settings
+model = "mistral-large"
+
+[[mcp_servers]]
+name = "mine"
+transport = "stdio"
+command = "keepme"
+
+[[mcp_servers]]
+name = "remote"
+transport = "streamable-http"
+url = "https://old.example.com"
+
+[mcp_servers.auth]
+type = "oauth"
+scopes = ["read"]
+
+[tools.mine_run]
+permission = "always"
+`), 0o644)
+	desired := map[string]catalog.MCP{"remote": remoteDef}
+
+	if got := h.sync(t, []string{"vibe"}, desired, Options{}); !reflect.DeepEqual(got, map[string]string{".vibe/config.toml#remote": OpUpdate}) {
+		t.Fatalf("the entry of the same name is taken over: %v", got)
+	}
+	text := read(t, vibe)
+	if !strings.Contains(text, "name = \"remote\"\ntransport = \"streamable-http\"\nurl = \"https://mcp.example.com/mcp\"") ||
+		strings.Contains(text, "https://old.example.com") || strings.Contains(text, "scopes") {
+		t.Errorf("the element and its auth sub-table are replaced:\n%s", text)
+	}
+	if !strings.Contains(text, "keepme") || !strings.Contains(text, "\"mistral-large\"") || !strings.Contains(text, "[tools.mine_run]") {
+		t.Errorf("the rest of the file survives:\n%s", text)
+	}
+	if actions, kept, _, err := Sync(h.dir, []string{"vibe"}, desired, asIs, h.state, Options{}); err != nil || len(actions) != 0 || len(kept) != 1 {
+		t.Fatalf("a second sync keeps the entry: %v %v %v", actions, kept, err)
+	}
+
+	got := h.sync(t, []string{"vibe"}, map[string]catalog.MCP{}, Options{})
+	if !reflect.DeepEqual(got, map[string]string{".vibe/config.toml#remote": OpRemove}) {
+		t.Fatalf("disabling removes the element: %v", got)
+	}
+	if text := read(t, vibe); !strings.Contains(text, "keepme") || strings.Contains(text, "mcp.example.com") || strings.Contains(text, "[[mcp_servers]]\nname = \"remote\"") {
+		t.Errorf("only the managed element goes:\n%s", text)
 	}
 }
 

@@ -34,6 +34,9 @@ var Agents = map[string]Agent{
 	// pi reads ~/.agents/skills and ./.agents/skills, and warns about a skill
 	// it finds twice.
 	"pi": {canonical, canonical},
+	// vibe reads ~/.agents/skills and ./.agents/skills, and its own
+	// ~/.vibe/skills and ./.vibe/skills.
+	"vibe": {canonical, canonical},
 	// zed reads ~/.agents/skills and the skills of trusted worktrees in
 	// ./.agents/skills.
 	"zed": {canonical, canonical},

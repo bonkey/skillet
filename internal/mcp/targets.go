@@ -8,9 +8,12 @@ import (
 
 // Target is where and how one agent keeps its user-level MCP servers.
 type Target struct {
-	File   string   // relative to the home directory
-	Node   []string // path of the object, or TOML table, that holds the servers
-	TOML   bool
+	File string   // relative to the home directory
+	Node []string // path of the object, or TOML table, that holds the servers
+	TOML bool
+	// Array marks a TOML config that keeps the servers in an array of
+	// tables ([[servers]]), where every entry names itself with a name key.
+	Array  bool
 	Render func(def catalog.MCP) Entry
 	// LocalOnly marks an agent whose config takes no remote servers.
 	LocalOnly bool
@@ -27,12 +30,16 @@ type Target struct {
 //	gemini-cli      docs/tools/mcp-server.md in github.com/google-gemini/gemini-cli
 //	omp             docs/mcp-config.md in github.com/can1357/oh-my-pi
 //	opencode        https://opencode.ai/config.json (McpLocalConfig, McpRemoteConfig)
+//	vibe            https://docs.mistral.ai/vibe/code/cli/mcp-servers
 //	zed             crates/settings_content/src/project.rs in github.com/zed-industries/zed
 //
 // Codex, opencode and crush reject unknown keys, so an entry holds only
 // documented ones. Timeouts are seconds in the catalog; each agent gets its
 // own unit. omp takes Claude Code's shape. Claude Desktop's config takes
 // local servers only; remote ones are connectors of the claude.ai account.
+// Vibe keeps its servers in a [[mcp_servers]] array of tables and names each
+// entry inside it; an SSE server joins it as a streamable HTTP URL, since
+// Vibe has no SSE transport.
 var Targets = map[string]Target{
 	"claude-code":    {File: ".claude.json", Node: []string{"mcpServers"}, Render: renderClaude},
 	"claude-desktop": {File: claudeDesktopFile(), Node: []string{"mcpServers"}, Render: renderClaudeDesktop, LocalOnly: true},
@@ -42,6 +49,7 @@ var Targets = map[string]Target{
 	"gemini-cli":     {File: ".gemini/settings.json", Node: []string{"mcpServers"}, Render: renderGemini},
 	"omp":            {File: ".omp/agent/mcp.json", Node: []string{"mcpServers"}, Render: renderClaude},
 	"opencode":       {File: ".config/opencode/opencode.json", Node: []string{"mcp"}, Render: renderOpencode},
+	"vibe":           {File: ".vibe/config.toml", Node: []string{"mcp_servers"}, TOML: true, Array: true, Render: renderVibe},
 	"zed":            {File: ".config/zed/settings.json", Node: []string{"context_servers"}, Render: renderZed},
 }
 
@@ -188,6 +196,31 @@ func renderZed(def catalog.MCP) Entry {
 	}
 	if def.Timeout > 0 {
 		e.add("timeout", def.Timeout) // seconds
+	}
+	return e
+}
+
+// renderVibe spells an entry as one element of Vibe's [[mcp_servers]] array;
+// the name key is written by the editor. Static authentication joins it as
+// the auth table, spelled with dotted keys.
+func renderVibe(def catalog.MCP) Entry {
+	var e Entry
+	if def.Type == "local" {
+		e.add("transport", "stdio")
+		commandArgsEnv(&e, def, "env")
+	} else {
+		e.add("transport", "streamable-http")
+		e.add("url", def.URL)
+		if len(def.Headers) > 0 {
+			e.add("auth.type", "static")
+			e.add("auth.headers", def.Headers)
+		}
+	}
+	if def.Timeout > 0 {
+		e.add("tool_timeout_sec", def.Timeout)
+	}
+	if len(def.DisabledTools) > 0 {
+		e.add("disabled_tools", def.DisabledTools)
 	}
 	return e
 }

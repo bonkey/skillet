@@ -862,7 +862,7 @@ func TestStatusListsAnOffRowUnderThePackThatIsOff(t *testing.T) {
 func TestAgentOf(t *testing.T) {
 	for command, want := range map[string]string{
 		"claude": "claude-code", "gemini": "gemini-cli", "cursor-agent": "cursor", "codex": "codex",
-		"/usr/local/bin/omp": "omp", "make": "",
+		"/usr/local/bin/omp": "omp", "vibe": "vibe", "make": "",
 	} {
 		if got := agentOf(command); got != want {
 			t.Errorf("agentOf(%q) = %q, want %q", command, got, want)

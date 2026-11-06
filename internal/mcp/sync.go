@@ -149,7 +149,7 @@ func (d tomlDocument) hash(name string) string {
 
 func open(target Target, data []byte) (document, error) {
 	if target.TOML {
-		f, err := parseTOMLFile(data, target.Node[0])
+		f, err := parseTOMLFile(data, target.Node[0], target.Array)
 		return tomlDocument{f}, err
 	}
 	f, err := parseJSONFile(data)

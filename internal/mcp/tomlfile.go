@@ -8,29 +8,40 @@ import (
 	"strings"
 )
 
-// tomlFile edits the [table.<name>] sections of a TOML config as text. It
-// owns whole sections, sub-tables included, and leaves every other line
-// untouched.
+// tomlFile edits the server entries of a TOML config as text. It owns whole
+// sections, sub-tables included, and leaves every other line untouched. The
+// entries are [table.<name>] sections, or, when array is set, elements of a
+// [[table]] array of tables that each name themselves with a name key.
 type tomlFile struct {
 	lines []string
 	table string // "mcp_servers"
+	array bool   // entries are elements of a [[mcp_servers]] array
 }
 
 var (
 	anyHeader = regexp.MustCompile(`^\s*\[`)
 	bareKey   = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+	dottedKey = regexp.MustCompile(`^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)+$`)
 )
 
-func parseTOMLFile(data []byte, table string) (*tomlFile, error) {
+func parseTOMLFile(data []byte, table string, array bool) (*tomlFile, error) {
 	text := strings.ReplaceAll(string(data), "\r\n", "\n")
-	f := &tomlFile{table: table}
+	f := &tomlFile{table: table, array: array}
 	if text != "" {
 		f.lines = strings.Split(strings.TrimSuffix(text, "\n"), "\n")
 	}
-	inline := regexp.MustCompile(`^\s*` + regexp.QuoteMeta(table) + `\s*[.=]`)
+	quoted := regexp.QuoteMeta(table)
+	inline := regexp.MustCompile(`^\s*` + quoted + `\s*[.=]`)
+	tableHeader := regexp.MustCompile(`^\s*\[` + quoted + `\s*\]`)
+	arrayHeader := regexp.MustCompile(`^\s*\[\[\s*` + quoted + `\s*\]\]`)
 	for _, line := range f.lines {
-		if inline.MatchString(line) {
+		switch {
+		case array && (inline.MatchString(line) || tableHeader.MatchString(line)):
+			return nil, fmt.Errorf("%s is defined as a table; only [[%s]] arrays can be managed", table, table)
+		case !array && inline.MatchString(line):
 			return nil, fmt.Errorf("%s is defined inline; only [%s.<name>] sections can be managed", table, table)
+		case !array && arrayHeader.MatchString(line):
+			return nil, fmt.Errorf("%s is an array of tables; only [%s.<name>] sections can be managed", table, table)
 		}
 	}
 	return f, nil
@@ -43,17 +54,34 @@ func (f *tomlFile) bytes() []byte {
 	return []byte(strings.Join(f.lines, "\n") + "\n")
 }
 
+// trimComment drops a trailing comment that starts outside a string.
+func trimComment(line string) string {
+	if i := strings.Index(line, "#"); i >= 0 && !strings.Contains(line[:i], `"`) {
+		line = line[:i]
+	}
+	return strings.TrimSpace(line)
+}
+
+// headerPath returns the dotted path of a table header line, and whether it
+// opens an array of tables.
+func headerPath(line string) (path string, array, ok bool) {
+	line = trimComment(line)
+	switch {
+	case strings.HasPrefix(line, "[[") && strings.HasSuffix(line, "]]"):
+		return strings.TrimSpace(line[2 : len(line)-2]), true, true
+	case len(line) > 2 && strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]"):
+		return strings.TrimSpace(line[1 : len(line)-1]), false, true
+	}
+	return "", false, false
+}
+
 // owner returns the entry name when a line is the header of one of the
 // entry's tables.
 func (f *tomlFile) owner(line string) (string, bool) {
-	line = strings.TrimSpace(line)
-	if i := strings.Index(line, "#"); i >= 0 && !strings.Contains(line[:i], `"`) {
-		line = strings.TrimSpace(line[:i])
-	}
-	if !strings.HasPrefix(line, "[") || strings.HasPrefix(line, "[[") || !strings.HasSuffix(line, "]") {
+	path, array, ok := headerPath(line)
+	if !ok || array {
 		return "", false
 	}
-	path := strings.TrimSpace(line[1 : len(line)-1])
 	rest, ok := strings.CutPrefix(path, f.table)
 	rest = strings.TrimSpace(rest)
 	if !ok || !strings.HasPrefix(rest, ".") {
@@ -68,8 +96,62 @@ func (f *tomlFile) owner(line string) (string, bool) {
 	return strings.TrimSpace(name), name != ""
 }
 
+type tomlElement struct {
+	name     string
+	from, to int // the half-open line range of the table and its sub-tables
+}
+
+// elements lists the [[table]] tables of the file, each named by the name key
+// among its own lines. A table without one keeps the empty name, which no
+// entry asks for and no edit touches.
+func (f *tomlFile) elements() []tomlElement {
+	var out []tomlElement
+	for i := 0; i < len(f.lines); i++ {
+		if path, array, ok := headerPath(f.lines[i]); !ok || !array || path != f.table {
+			continue
+		}
+		to := i + 1
+		for to < len(f.lines) {
+			if path, _, header := headerPath(f.lines[to]); header && !strings.HasPrefix(path, f.table+".") {
+				break // the next element, or the next table of the file
+			}
+			to++
+		}
+		end := to
+		for end > i+1 && strings.TrimSpace(f.lines[end-1]) == "" {
+			end--
+		}
+		var name string
+		for j := i + 1; j < end; j++ {
+			if _, _, header := headerPath(f.lines[j]); header {
+				break // keys of a sub-table do not name the element
+			}
+			key, value, isKey := strings.Cut(trimComment(f.lines[j]), "=")
+			if !isKey || strings.TrimSpace(key) != "name" {
+				continue
+			}
+			if unquoted, err := strconv.Unquote(strings.TrimSpace(value)); err == nil {
+				name = unquoted
+				break
+			}
+		}
+		out = append(out, tomlElement{name: name, from: i, to: end})
+		i = to - 1
+	}
+	return out
+}
+
 // spans lists the line ranges [from, to) of an entry's tables.
 func (f *tomlFile) spans(name string) [][2]int {
+	if f.array {
+		var spans [][2]int
+		for _, el := range f.elements() {
+			if el.name != "" && el.name == name {
+				spans = append(spans, [2]int{el.from, el.to})
+			}
+		}
+		return spans
+	}
 	var spans [][2]int
 	for i := 0; i < len(f.lines); i++ {
 		if owner, ok := f.owner(f.lines[i]); !ok || owner != name {
@@ -90,9 +172,17 @@ func (f *tomlFile) spans(name string) [][2]int {
 
 func (f *tomlFile) names() []string {
 	seen := map[string]bool{}
-	for _, line := range f.lines {
-		if name, ok := f.owner(line); ok {
-			seen[name] = true
+	if f.array {
+		for _, el := range f.elements() {
+			if el.name != "" {
+				seen[el.name] = true
+			}
+		}
+	} else {
+		for _, line := range f.lines {
+			if name, ok := f.owner(line); ok {
+				seen[name] = true
+			}
 		}
 	}
 	names := make([]string, 0, len(seen))
@@ -148,14 +238,22 @@ func (f *tomlFile) set(name string, entry Entry) {
 	f.lines = append(f.lines, text...)
 }
 
-// render spells an entry as TOML: scalar and list fields in the main table,
-// each map field in a sub-table.
+// render spells an entry as TOML: as one [[table]] element that names itself
+// and holds each map field as an inline table, or as a [table.<name>] section
+// with scalar and list fields in the main table and each map field in a
+// sub-table.
 func (f *tomlFile) render(name string, entry Entry) string {
+	if f.array {
+		lines := []string{"[[" + f.table + "]]", "name = " + tomlString(name)}
+		for _, field := range entry {
+			lines = append(lines, entryKey(field.Key)+" = "+tomlValue(field.Value))
+		}
+		return strings.Join(lines, "\n")
+	}
 	header := f.table + "." + tomlKey(name)
 	var main, tables []string
 	for _, field := range entry {
-		switch value := field.Value.(type) {
-		case map[string]string:
+		if value, ok := field.Value.(map[string]string); ok {
 			keys := make([]string, 0, len(value))
 			for key := range value {
 				keys = append(keys, key)
@@ -166,23 +264,52 @@ func (f *tomlFile) render(name string, entry Entry) string {
 				lines = append(lines, tomlKey(key)+" = "+tomlString(value[key]))
 			}
 			tables = append(tables, strings.Join(lines, "\n"))
-		case []string:
-			items := make([]string, len(value))
-			for i, item := range value {
-				items[i] = tomlString(item)
-			}
-			main = append(main, tomlKey(field.Key)+" = ["+strings.Join(items, ", ")+"]")
-		case string:
-			main = append(main, tomlKey(field.Key)+" = "+tomlString(value))
-		default:
-			main = append(main, fmt.Sprintf("%s = %v", tomlKey(field.Key), value))
+			continue
 		}
+		main = append(main, tomlKey(field.Key)+" = "+tomlValue(field.Value))
 	}
 	return strings.Join(append(append([]string{"[" + header + "]"}, main...), tables...), "\n")
 }
 
+// tomlValue spells one field value: maps as inline tables, lists as inline
+// arrays, strings quoted, and everything else the way fmt prints it.
+func tomlValue(v any) string {
+	switch value := v.(type) {
+	case map[string]string:
+		keys := make([]string, 0, len(value))
+		for key := range value {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		parts := make([]string, 0, len(keys))
+		for _, key := range keys {
+			parts = append(parts, tomlKey(key)+" = "+tomlString(value[key]))
+		}
+		return "{ " + strings.Join(parts, ", ") + " }"
+	case []string:
+		items := make([]string, len(value))
+		for i, item := range value {
+			items[i] = tomlString(item)
+		}
+		return "[" + strings.Join(items, ", ") + "]"
+	case string:
+		return tomlString(value)
+	default:
+		return fmt.Sprintf("%v", value)
+	}
+}
+
 func tomlKey(key string) string {
 	if bareKey.MatchString(key) {
+		return key
+	}
+	return tomlString(key)
+}
+
+// entryKey spells a field key of an array element; a dotted one addresses
+// the entry's sub-table, as in auth.headers.
+func entryKey(key string) string {
+	if bareKey.MatchString(key) || dottedKey.MatchString(key) {
 		return key
 	}
 	return tomlString(key)

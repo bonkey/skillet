@@ -977,7 +977,7 @@ func agentOf(command string) string {
 		return "gemini-cli"
 	case "cursor", "cursor-agent":
 		return "cursor"
-	case "codex", "crush", "omp", "opencode", "zed":
+	case "codex", "crush", "omp", "opencode", "vibe", "zed":
 		return filepath.Base(command)
 	}
 	return ""
