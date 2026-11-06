@@ -151,6 +151,40 @@ func TestEnableAndDisableChangeLinksOnly(t *testing.T) {
 	}
 }
 
+func TestToggleTakesSkillFoldersAsStatusPrintsThem(t *testing.T) {
+	e := setup(t)
+	write(t, filepath.Join(e.origin, "skills", "alpha-two", "SKILL.md"), "---\nname: alpha-two\ndescription: Another\n---\n")
+	git(t, e.origin, "add", "-A")
+	git(t, e.origin, "commit", "-q", "-m", "alpha-two")
+	e.open(t, e.config("", ""))
+	global := filepath.Join(e.p.Home, ".claude", "skills")
+	linked := func() []string {
+		var out []string
+		for _, name := range []string{"alpha", "alpha-two", "beta"} {
+			if isLink(filepath.Join(global, name)) {
+				out = append(out, name)
+			}
+		}
+		return out
+	}
+
+	if _, err := e.app.Toggle(e.app.Global(), false, false, "skills/skills/al"); err != nil || !reflect.DeepEqual(linked(), []string{"beta"}) {
+		t.Fatalf("a folder prefix takes every skill below it: %v %v", linked(), err)
+	}
+	if _, err := e.app.Toggle(e.app.Global(), true, false, "skills/skills/alpha"); err != nil || !reflect.DeepEqual(linked(), []string{"alpha", "beta"}) {
+		t.Fatalf("a whole folder takes that skill only: %v %v", linked(), err)
+	}
+	if _, err := e.app.Toggle(e.app.Global(), false, false, "skills/other"); err == nil || !strings.Contains(err.Error(), "skills/other") {
+		t.Fatalf("a folder that holds no skill is an error: %v", err)
+	}
+	if _, err := e.app.Toggle(e.app.Global(), false, true, "skills/skills/b"); err != nil || !reflect.DeepEqual(linked(), []string{"alpha"}) {
+		t.Fatalf("disable --save with a folder: %v %v", linked(), err)
+	}
+	if report, err := e.app.Sync(e.app.Global(), SyncOptions{}); err != nil || !reflect.DeepEqual(linked(), []string{"alpha", "alpha-two"}) {
+		t.Fatalf("--save switches the skills below the folder off in the file: %v %+v %v\n%s", linked(), report, err, read(t, e.p.ConfigFile()))
+	}
+}
+
 func TestSyncEnablesWhatIsDeclaredAndFlagsTheRest(t *testing.T) {
 	e := setup(t)
 	global := filepath.Join(e.p.Home, ".claude", "skills")

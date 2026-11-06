@@ -808,8 +808,13 @@ func toggleCmd(enable bool) *cobra.Command {
 	if enable {
 		use, short = "enable", "Enable skills, servers, packs and sources in a scope"
 	}
-	cmd := &cobra.Command{Use: use + " <skill|mcp:server|@pack|skills:source>...", Short: short, Args: cobra.MinimumNArgs(1),
+	cmd := &cobra.Command{Use: use + " <skill|mcp:server|@pack|skills:source|folder>...", Short: short, Args: cobra.MinimumNArgs(1),
 		Long: short + `.
+
+A name with a "/" is a skill's folder inside the clones, as status prints it,
+such as mattpocock-skills/skills/engineering/tdd: it takes the skill in that
+folder, or else every skill whose folder starts with it, so
+mattpocock-skills/skills/engine takes all of skills/engineering.
 
 Only links and the agents' MCP entries change. With --save, the "enabled"
 flag of the named entries in the scope's config file changes too, so the

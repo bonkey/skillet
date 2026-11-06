@@ -103,9 +103,12 @@ project: say so, and offer to disable it globally and enable it with `-p` in the
    skillet enable -p @ios swift-docc     # a pack and a skill, in this project
    skillet disable top-design            # one skill, globally
    skillet disable @marketing            # a whole pack, globally
+   skillet disable mattpocock-skills/skills/engine   # every skill whose folder starts so
    ```
 
-   Disabling one skill of a pack leaves the pack's other skills enabled.
+   Disabling one skill of a pack leaves the pack's other skills enabled. A name with a `/` is a
+   skill's folder inside the clones, as `status` prints it: it takes the skill in that folder, or
+   else every skill whose folder starts with it.
 
 4. Read the output. It lists only what changed, in two tables headed by the scope: `skills` with
    one row per skill, named by its folder inside the clones and, when the folder has another name,

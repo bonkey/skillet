@@ -579,9 +579,14 @@ func expandMCP(def catalog.MCP, expandText func(string) (string, []string)) (cat
 }
 
 // Toggle enables or disables skills, servers ("mcp:name"), packs ("@name")
-// and sources ("skills:name") in a scope. Servers exist in the global scope
-// only. With save, the entries' flags in the scope's config file change too.
+// and sources ("skills:name") in a scope, and skills by their folder inside
+// the clones, as status prints it. Servers exist in the global scope only.
+// With save, the entries' flags in the scope's config file change too.
 func (a *App) Toggle(scope Scope, enable, save bool, names ...string) (SyncReport, error) {
+	names, err := a.byFolder(names)
+	if err != nil {
+		return SyncReport{}, err
+	}
 	if scope.Project {
 		for _, name := range names {
 			if strings.HasPrefix(name, catalog.MCPPrefix) {
@@ -629,6 +634,38 @@ func (a *App) Toggle(scope Scope, enable, save bool, names ...string) (SyncRepor
 		}
 	}
 	return report, err
+}
+
+// byFolder replaces every skill name that holds a "/", which no skill name
+// does, with the skills in that folder inside the clones: the one whose
+// folder it is, else all whose folders start with it.
+func (a *App) byFolder(names []string) ([]string, error) {
+	var out []string
+	for _, name := range names {
+		if part, _ := catalog.SplitRef(name); !strings.Contains(part, "/") || strings.HasPrefix(name, catalog.PackPrefix) ||
+			strings.HasPrefix(name, catalog.MCPPrefix) || catalog.IsSource(name) {
+			out = append(out, name)
+			continue
+		}
+		var exact, below []string
+		for _, skill := range a.Catalog.SkillNames() {
+			switch label := a.labelOf(skill); {
+			case label == name:
+				exact = append(exact, skill)
+			case strings.HasPrefix(label, name):
+				below = append(below, skill)
+			}
+		}
+		switch {
+		case exact != nil:
+			out = append(out, exact...)
+		case below != nil:
+			out = append(out, below...)
+		default:
+			return nil, fmt.Errorf("no skill in a folder that starts with %q", name)
+		}
+	}
+	return out, nil
 }
 
 // saveFlags switches the named entries on or off in the scope's config
